@@ -15,7 +15,7 @@ use std::collections::HashMap;
 use std::sync::{Mutex, OnceLock};
 
 use core_math::{Expr, Span, parse};
-use render::{GpuStatus, Viewport, grid_ticks, sample_curve};
+use render::{GpuStatus, POLE_BREAK, Viewport, grid_ticks, sample_curve};
 use serde::{Deserialize, Serialize};
 use wasm_bindgen::prelude::*;
 
@@ -222,24 +222,64 @@ pub fn set_canvas_size(w: f64, h: f64) {
     }
 }
 
+/// Hover query core: pixel in, math out (AD-4). Pure function over explicit
+/// inputs so `cargo test` covers the exact tooltip path without WASM.
+///
+/// Maps the pixel through `viewport.screen_to_world` using the stored canvas
+/// size, then evaluates the active expression at `math_x`. Diverging or
+/// non-finite samples (beyond [`POLE_BREAK`]) become `math_y: None` so the
+/// tooltip shows a gap marker instead of a spike value. Degenerate canvas
+/// sizes or non-finite pixels yield `math_x: NaN` with `math_y: None`.
+///
+/// Svelte never performs this transform itself; it calls [`query_hover`] and
+/// displays the returned coordinates verbatim.
+fn query_hover_core(
+    viewport: &Viewport,
+    canvas_w: f64,
+    canvas_h: f64,
+    px_x: f64,
+    px_y: f64,
+    expr: Option<&Expr>,
+    params: &HashMap<String, f64>,
+) -> HoverResult {
+    if !(canvas_w > 0.0)
+        || !(canvas_h > 0.0)
+        || !canvas_w.is_finite()
+        || !canvas_h.is_finite()
+        || !px_x.is_finite()
+        || !px_y.is_finite()
+    {
+        return HoverResult {
+            math_x: f64::NAN,
+            math_y: None,
+            marker: None,
+        };
+    }
+    let (math_x, _) = viewport.screen_to_world(px_x, px_y, canvas_w, canvas_h);
+    let math_y = expr
+        .map(|e| e.eval(math_x, params))
+        .filter(|y| y.is_finite() && y.abs() <= POLE_BREAK);
+    HoverResult {
+        math_x,
+        math_y,
+        marker: None,
+    }
+}
+
 /// Hover query: pixel in, math out. Never performs spatial math in Svelte.
 #[wasm_bindgen]
 pub fn query_hover(px_x: f64, px_y: f64) -> String {
     let s = session().lock().unwrap();
-    let (math_x, _) = s.viewport.screen_to_world(px_x, px_y, s.canvas_w, s.canvas_h);
-    let math_y = active_expr(&s).map(|e| {
-        let y = e.eval(math_x, &s.params);
-        if y.is_finite() && y.abs() <= 1e6 {
-            Some(y)
-        } else {
-            None
-        }
-    });
-    let out = HoverResult {
-        math_x,
-        math_y: math_y.flatten(),
-        marker: None,
-    };
+    let expr = active_expr(&s);
+    let out = query_hover_core(
+        &s.viewport,
+        s.canvas_w,
+        s.canvas_h,
+        px_x,
+        px_y,
+        expr.as_ref(),
+        &s.params,
+    );
     serde_json::to_string(&out).unwrap()
 }
 
@@ -373,6 +413,44 @@ mod tests {
         assert_eq!(ws.version, 1);
         assert_eq!(ws.functions.get("f").unwrap(), "a*x^2");
         assert_eq!(ws.params.get("a").unwrap(), &2.0);
+    }
+
+    #[test]
+    fn hover_reports_none_near_pole_break() {
+        let _guard = test_lock().lock().unwrap();
+        reset_session();
+        let _: ParseOk = parse_json(&set_function("f", "1/x"));
+        set_canvas_size(800.0, 600.0);
+        update_viewport(-1.0, 1.0, -10.0, 10.0);
+        // center pixel maps to math x = 0, where 1/x diverges.
+        let hover: HoverResult = parse_json(&query_hover(400.0, 300.0));
+        assert!(hover.math_x.abs() < 1e-9);
+        assert_eq!(hover.math_y, None);
+        assert_eq!(hover.marker, None);
+    }
+
+    #[test]
+    fn hover_without_function_returns_math_x_only() {
+        let _guard = test_lock().lock().unwrap();
+        reset_session();
+        set_canvas_size(800.0, 600.0);
+        update_viewport(-10.0, 10.0, -10.0, 10.0);
+        let hover: HoverResult = parse_json(&query_hover(600.0, 150.0));
+        // math_x is still the exact viewport transform: -10 + 0.75 * 20 = 5.
+        assert!((hover.math_x - 5.0).abs() < 1e-9);
+        assert_eq!(hover.math_y, None);
+    }
+
+    #[test]
+    fn hover_core_rejects_degenerate_input() {
+        let vp = Viewport::default();
+        let params = HashMap::new();
+        let bad_canvas = query_hover_core(&vp, 0.0, 600.0, 400.0, 300.0, None, &params);
+        assert!(bad_canvas.math_x.is_nan());
+        assert_eq!(bad_canvas.math_y, None);
+        let bad_px = query_hover_core(&vp, 800.0, 600.0, f64::NAN, 300.0, None, &params);
+        assert!(bad_px.math_x.is_nan());
+        assert_eq!(bad_px.math_y, None);
     }
 
     #[test]

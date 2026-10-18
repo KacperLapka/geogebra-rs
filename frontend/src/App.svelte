@@ -60,8 +60,9 @@
   }
 
   function handleHover(px, py) {
+    if (!Number.isFinite(px) || !Number.isFinite(py)) return;
     const res = backend.queryHover(px, py);
-    hover = { px, py, math_x: res.math_x, math_y: res.math_y };
+    hover = { px, py, math_x: res.math_x, math_y: res.math_y, marker: res.marker ?? null };
   }
 
   onMount(async () => {
