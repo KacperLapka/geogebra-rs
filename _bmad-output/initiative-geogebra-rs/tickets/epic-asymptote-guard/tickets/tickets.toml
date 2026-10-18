@@ -1,0 +1,57 @@
+# Epic 3 — asymptote and discontinuity guard breakdown, in build order.
+# Table order is build order. `id` is permanent, never reused.
+
+[[entry]]
+id = 1
+type = "story"
+title = "Tracer bullet: 1/x pole break with vertical dashed overlay"
+description = "Thinnest solver-to-curve path for f(x)=1/x using epic-2 entry 2 Brent output: pole x detection in solver pole-skip function, guard-plus-strip-split in curve sampler function, vertical dashed overlay geometry; documents POLE 1e6 duplication; feeds stories 2-4."
+verify = "Dev runs cargo test -p core_math -p render; types f(x)=1/x in npm run dev and sees a split at x=0 with a dashed vertical line and no connecting spike or NaN in buffers."
+covers = ["R1"]
+after = ["2.2"]
+hitl = false
+risk = "medium"
+
+[[entry]]
+id = 2
+type = "story"
+title = "Periodic transcendental pole guard for tan"
+description = "Builds on story 1 sampler function to extend viewport scan density and solver pole-skip function to periodic poles of tan(x) without false connecting lines; touches pole-skip path only, disjoint from story 3 degree-classify function; feeds story 4."
+verify = "Dev runs cargo test -p core_math solver pole tests and cargo test -p render curve tests; types f(x)=tan(x) in npm run dev and sees breaks at each pole with no emitted zero-bracket on pole jumps."
+covers = ["R1"]
+after = [1]
+hitl = false
+risk = "high"
+
+[[entry]]
+id = 3
+type = "story"
+title = "Rational degree-comparison for horizontal and slant asymptotes"
+description = "Builds on story 1 solver contract to classify Horizontal(y=L) and Slant(y=mx+b) for rational functions by numerator-denominator degree comparison in solver degree-classify function, disjoint from story 2 pole-skip path; feeds story 4."
+verify = "Dev runs cargo test -p core_math solver tests; classifies y=0 for 1/x, y=L for (2x+1)/(x-2), and y=x+2 slant for (x^2-1)/(x-2) within eps<1e-12 with no Horizontal/Slant emitted for tan(x)."
+covers = ["R1"]
+after = [1]
+hitl = false
+risk = "medium"
+
+[[entry]]
+id = 4
+type = "story"
+title = "Limit-sampling fallback with full asymptote overlay wiring"
+description = "Builds on stories 2-3 outputs to add limit-sampling fallback at magnitude 1e6 for non-rational cases and wire Horizontal/Slant plus vertical pole overlays into curve dashed strips for tan, 1/x, and (x^2-1)/(x-2) without regressing 8ms 2000-point budget."
+verify = "Dev runs cargo test -p core_math -p render including 2000-point 8ms check; types tan(x), 1/x, and (x^2-1)/(x-2) in npm run dev and sees correct dashed vertical, horizontal, and slant overlays with no NaN in GPU buffers."
+covers = ["R1"]
+after = [1, 2, 3]
+hitl = false
+risk = "medium"
+
+[[entry]]
+id = 5
+type = "story"
+title = "Refactor sweep"
+description = "Cleanup only from plans and review findings deferred in this epic; no pushed scope, new scope is a new story."
+verify = "Dev runs cargo test -p core_math -p render and repeats the npm run dev asymptote demo; all still pass after cleanup."
+covers = ["R1"]
+after = [1, 2, 3, 4]
+hitl = false
+risk = "low"
