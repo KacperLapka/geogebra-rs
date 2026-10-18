@@ -1,5 +1,5 @@
- - [] poprawić prototyp
- - [] 5 historyjek użytkownika (GIVEN, INWEST)
- - [] use case w uml
- - [] diagram wymagań ISO kategorie wymagań
- - [] Github specs kit/Beamada
+ - [ ] poprawić prototyp
+ - [ ] 5 historyjek użytkownika (GIVEN, INWEST)
+ - [ ] use case w uml
+ - [ ] diagram wymagań ISO kategorie wymagań
+ - [ ] Github specs kit/Beamada
