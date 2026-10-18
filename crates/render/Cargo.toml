@@ -1,0 +1,13 @@
+[package]
+name = "render"
+version = "0.1.0"
+edition = "2024"
+description = "Viewport math, curve sampler, grid ticks. GPU pipeline (wgpu) lands in story 1.2; this tracer keeps pure, natively testable logic."
+license = "MIT"
+
+[dependencies]
+core_math = { path = "../core_math" }
+
+[lib]
+name = "render"
+path = "src/lib.rs"

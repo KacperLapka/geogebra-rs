@@ -1,0 +1,10 @@
+[package]
+name = "core_math"
+version = "0.1.0"
+edition = "2024"
+description = "Pure math engine: AST, Pratt parser, evaluator, differentiator, simplifier, Brent solver. Zero external dependencies."
+license = "MIT"
+
+[lib]
+name = "core_math"
+path = "src/lib.rs"

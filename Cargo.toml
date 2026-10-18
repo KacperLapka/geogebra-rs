@@ -1,6 +1,8 @@
 [workspace]
 resolver = "3"
 members = [
-  "api",
-  "wasm",
+  "crates/core_math",
+  "crates/render",
+  "crates/wasm_bridge",
+  "crates/api",
 ]
