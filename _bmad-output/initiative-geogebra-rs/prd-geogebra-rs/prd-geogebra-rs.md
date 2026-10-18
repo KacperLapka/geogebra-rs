@@ -1,6 +1,6 @@
 ---
 title: GeoGebra RS Product Requirements Document
-status: draft
+status: final
 created: 2026-10-18
 updated: 2026-10-18
 ---

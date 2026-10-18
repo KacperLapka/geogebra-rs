@@ -1,6 +1,6 @@
 ---
 title: GeoGebra RS - Dokument Wymagań Produktowych (PRD)
-status: draft
+status: final
 created: 2026-10-18
 updated: 2026-10-18
 language: pl
