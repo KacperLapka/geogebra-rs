@@ -1,0 +1,79 @@
+# Epic 1 — scaffold tracer breakdown, in build order.
+# Table order is build order. `id` is permanent, never reused.
+
+[[entry]]
+id = 1
+type = "story"
+title = "Tracer bullet: polynomial plots with hover and slider"
+description = "Moves api/ wasm/ to crates/ layout, adds core_math/render/wasm_bridge stubs, scaffolds frontend/ Svelte+Vite, wires parse-plot-hover-slider thin path with workspace JSON stub version:1."
+verify = "Dev runs cargo test, wasm-pack build, npm dev; types f(x)=a*x^2, sees live curve, hovers to read (x,y) tooltip, drags slider a and curve follows."
+covers = ["R1", "R2", "R3", "R4"]
+after = []
+hitl = true
+risk = "high"
+
+[[entry]]
+id = 2
+type = "story"
+title = "wgpu pipeline with WebGL2 fallback and viewport loop"
+description = "Implements render/pipeline.rs device init PRIMARY|GL, canvas event loop, update_viewport path, 60 FPS drag/zoom baseline."
+verify = "App pans/zooms continuously without blank frames on WebGPU; falls back to WebGL2 when WebGPU unavailable."
+covers = ["R4"]
+after = [1]
+hitl = false
+risk = "high"
+
+[[entry]]
+id = 3
+type = "story"
+title = "Full parser coverage with span errors under 50ms"
+description = "Completes lexer/parser/eval for polynomials, trig, exp, log, rationals plus params; Span errors serialized to {span,message}."
+verify = "cargo test parses all supported forms; typing bad syntax shows char-accurate error in <50ms without loop stall."
+covers = ["R1"]
+after = [1]
+hitl = false
+risk = "medium"
+
+[[entry]]
+id = 4
+type = "story"
+title = "Adaptive sampler and grid under 8ms"
+description = "Implements render/curve.rs adaptive sub-pixel sampling and grid.rs log subdivisions; 2000-pt buffer in <8ms."
+verify = "2000-point curve regenerates in <8ms measured; grid relabels smoothly during zoom."
+covers = ["R3", "R4"]
+after = [2]
+hitl = false
+risk = "medium"
+
+[[entry]]
+id = 5
+type = "story"
+title = "Hover query and tooltip"
+description = "Implements query_hover math transform and Svelte Tooltip overlay; Svelte holds no parallel viewport copy."
+verify = "Mousemove over curve shows HTML tooltip with exact math (x,y) returned from Rust."
+covers = ["R3", "R4"]
+after = [2, 4]
+hitl = false
+risk = "low"
+
+[[entry]]
+id = 6
+type = "story"
+title = "Slider binding and workspace JSON shape"
+description = "Wires update_param HashMap eval path and Sliders.svelte; defines workspace JSON {version:1,functions,params,viewport} owned for Epic 5."
+verify = "Slider a on f(x)=a*x^2 updates curve in real time; serialize_workspace returns <10KB JSON with version:1."
+covers = ["R2"]
+after = [1, 3]
+hitl = false
+risk = "low"
+
+[[entry]]
+id = 7
+type = "story"
+title = "Refactor sweep"
+description = "Cleanup only from plans and review findings deferred in this epic; no pushed scope, new scope is a new story."
+verify = "cargo test, wasm-pack build, and manual tracer demo still pass after cleanup."
+covers = ["R1", "R2", "R3", "R4"]
+after = [1, 2, 3, 4, 5, 6]
+hitl = false
+risk = "low"

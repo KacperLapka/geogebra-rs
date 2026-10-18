@@ -64,3 +64,4 @@ A developer loads the browser app, types a function, sees a live curve, and hove
 - Decision: 2026-10-18 — Leave workspace JSON shape (`version:1, functions, params, viewport`) to first story that needs it; Epic 5 waits on it.
 - Decision: 2026-10-18 — Leave 60 FPS verification method to stories; declined spike for wgpu/WebGL2 fallback, risk surfaces in tracer story and fails fast.
 - Decision: 2026-10-18 — Refine from parent R1,R2,R8,R9 alone; no extra elicitation, no PRD/UX/architecture run.
+- Decision: 2026-10-18 — Tracer bullet is entry 1 (thin parse-plot-hover-slider with simplified sampler); entry 2 (wgpu fallback) next as least-sure; entries 3-6 harden parser, sampler/grid, hover, slider+JSON shape; entry 7 refactor sweep.
