@@ -36,7 +36,8 @@ pub fn lex(input: &str) -> Result<Vec<Token>, LexError> {
     let mut tokens = Vec::new();
     let mut i = 0;
     while i < bytes.len() {
-        let c = bytes[i] as char;
+        // `i` always rests on a char boundary; decode one char for span math.
+        let c = input[i..].chars().next().unwrap();
         if c.is_whitespace() {
             i += c.len_utf8();
             continue;
@@ -87,15 +88,14 @@ pub fn lex(input: &str) -> Result<Vec<Token>, LexError> {
             }
             _ if c.is_alphabetic() || c == '_' => {
                 let mut end = i + c.len_utf8();
-                while let Some(&b) = bytes.get(end) {
-                    let ch = b as char;
+                while let Some(ch) = input[end..].chars().next() {
                     if ch.is_alphanumeric() || ch == '_' {
-                        end += 1;
+                        end += ch.len_utf8();
                     } else {
                         break;
                     }
                 }
-                // identifiers are ASCII by construction; slicing is safe
+                // `end` rests on a char boundary by construction; slicing is safe
                 let name = input[start..end].to_string();
                 tokens.push(tok(TokenKind::Ident(name), start, end));
                 i = end;
@@ -198,5 +198,29 @@ mod tests {
             TokenKind::Number(v) => assert!((v - 0.0025).abs() < 1e-15),
             _ => panic!("expected number"),
         }
+    }
+
+    #[test]
+    fn reports_multibyte_unexpected_character_without_panic() {
+        // `€` is 3 bytes in UTF-8 starting at byte offset 2.
+        let err = lex("x+€").unwrap_err();
+        assert_eq!(err.span, Span::new(2, 5));
+        assert!(err.message.contains('€'));
+    }
+
+    #[test]
+    fn lexes_underscore_and_alphanumeric_idents() {
+        let toks = lex("alpha_1 + _b2").unwrap();
+        assert_eq!(toks.len(), 3);
+        assert!(matches!(&toks[0].kind, TokenKind::Ident(n) if n == "alpha_1"));
+        assert!(matches!(&toks[2].kind, TokenKind::Ident(n) if n == "_b2"));
+    }
+
+    #[test]
+    fn star_star_aliases_caret() {
+        let toks = lex("x**2").unwrap();
+        assert_eq!(toks.len(), 3);
+        assert!(matches!(toks[1].kind, TokenKind::Caret));
+        assert_eq!(toks[1].span, Span::new(1, 3));
     }
 }

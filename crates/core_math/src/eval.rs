@@ -74,4 +74,26 @@ mod tests {
             assert!((got - want).abs() < 1e-12, "x={x}: {got} vs {want}");
         }
     }
+
+    #[test]
+    fn evaluates_full_form_family_with_params() {
+        let cases: &[(&str, f64, &[(&str, f64)], f64)] = &[
+            ("a*x^2+b*x+c", 2.0, &[("a", 1.0), ("b", 2.0), ("c", 3.0)], 11.0),
+            ("(x+1)/(x-1)", 0.0, &[], -1.0),
+            ("tan(x)", 0.0, &[], 0.0),
+            ("ln(x+1)", 0.0, &[], 0.0),
+            ("sqrt(a^2+x^2)", 4.0, &[("a", 3.0)], 5.0),
+        ];
+        for (formula, x, ps, want) in cases {
+            let expr = parse(formula).unwrap();
+            let got = expr.eval(*x, &params(ps));
+            assert!((got - want).abs() < 1e-12, "{formula} x={x}: {got} vs {want}");
+        }
+    }
+
+    #[test]
+    fn domain_errors_are_nan_not_panic() {
+        let expr = parse("log(x)+sqrt(x)").unwrap();
+        assert!(expr.eval(-1.0, &params(&[])).is_nan());
+    }
 }
