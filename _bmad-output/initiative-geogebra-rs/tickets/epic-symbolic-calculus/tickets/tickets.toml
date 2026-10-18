@@ -1,0 +1,90 @@
+# Epic 2 — symbolic calculus engine breakdown, in build order.
+# Table order is build order. `id` is permanent, never reused.
+
+[[entry]]
+id = 1
+type = "story"
+title = "Tracer bullet: polynomial derivatives with simplify and tangent eval"
+description = "Stands up core_math diff.rs/simplify.rs skeleton plus solver marker struct stub; differentiates polynomial f, simplifies f'/f'', evaluates tangent at x0 natively."
+verify = "cargo test differentiates f(x)=x^3+2x, simplifies f'/f'', and evaluates tangent at x0 within eps<1e-12."
+covers = ["R1", "R2"]
+after = []
+hitl = false
+risk = "medium"
+
+[[entry]]
+id = 2
+type = "story"
+title = "Brent root finder with viewport bracketing and pole guard"
+description = "Builds on entry 1 skeleton and stub to implement solver.rs sign-change bracketing then Brent refine over viewport scan plus POLE_THRESHOLD pole-vs-zero guard per AD-3."
+verify = "cargo test finds all real roots of cubic and trig forms in viewport with eps<1e-12 and emits no marker on pole jumps."
+covers = ["R3"]
+after = [1]
+hitl = false
+risk = "high"
+
+[[entry]]
+id = 3
+type = "story"
+title = "Transcendental differentiation with chain rule"
+description = "Extends diff.rs with sin/cos, exp, ln rules plus chain rule and constant folding for nested transcendental forms."
+verify = "cargo test differentiates sin, exp, and ln compositions including second derivatives with simplified canonical output."
+covers = ["R1"]
+after = [1]
+hitl = false
+risk = "medium"
+
+[[entry]]
+id = 4
+type = "story"
+title = "Rational quotient-power rules with simplification hardening"
+description = "Adds quotient and power rules and hardens simplify.rs with identity elimination, sign normalization, and constant folding for rational forms."
+verify = "cargo test differentiates rational and power forms including second derivatives with no unbounded AST growth on second derivation."
+covers = ["R1"]
+after = [3]
+hitl = false
+risk = "medium"
+
+[[entry]]
+id = 5
+type = "story"
+title = "Extrema and inflection detection with marker data"
+description = "Detects minima/maxima via f' zeros and inflection via f'' sign change through solver pipeline; defines marker data shape for render."
+verify = "cargo test identifies extrema and inflection of cubic and sin forms in viewport with highlighted marker coordinates."
+covers = ["R4"]
+after = [2, 4]
+hitl = false
+risk = "medium"
+
+[[entry]]
+id = 6
+type = "story"
+title = "Tangent and marker render integration"
+description = "Wires tangent eval and marker circles into render/curve.rs overlays via existing query_hover and sampler path with no AD-5 change."
+verify = "Run cargo test for tangent and marker wiring, then npm run dev: set f(x)=x^2, drag the x0 slider, and confirm the tangent follows at 60 FPS with root and extrema markers from Rust."
+covers = ["R2", "R3", "R4"]
+after = [5, "epic-scaffold-tracer"]
+hitl = false
+risk = "medium"
+
+[[entry]]
+id = 7
+type = "story"
+title = "250-benchmark calculus suite at 100 percent"
+description = "Verification-only with no new behavior: assembles 250-benchmark native cargo-test suite (SM-2) covering supported functions for derivatives, tangent, roots, and extrema; render covered by entry 6."
+verify = "cargo test runs the 250-benchmark suite with 100 percent pass."
+covers = ["R1", "R2", "R3", "R4"]
+after = [2, 3, 4, 5]
+hitl = false
+risk = "low"
+
+[[entry]]
+id = 8
+type = "story"
+title = "Refactor sweep"
+description = "Cleanup-only with no new behavior: cleanup only from plans and review findings deferred in this epic; no pushed scope, new scope is a new story."
+verify = "cargo test and the 250-benchmark suite still pass after cleanup."
+covers = ["R1", "R2", "R3", "R4"]
+after = [1, 2, 3, 4, 5, 6]
+hitl = false
+risk = "low"

@@ -48,7 +48,7 @@ Every calculus analysis capability (derivatives, tangent, roots, extrema, inflec
 
 - Covers only `core_math` and its integration with `render` for marker and tangent overlays.
 - Does not cover: asymptote/pole detection (epic 3), multi-curve rendering polish (epic 4), persistence (epic 5).
-- Waits on epic-scaffold-tracer because: needs the `wasm_bridge` function-set ABI and canvas render loop to integrate markers.
+- Waits on epic-scaffold-tracer for integration only: native core_math stories (entries 1-5, 7) may proceed before tracer finishes; entry 6 integration needs the `wasm_bridge` function-set ABI and canvas render loop to integrate markers.
 
 ## References
 
@@ -61,3 +61,4 @@ Every calculus analysis capability (derivatives, tangent, roots, extrema, inflec
 - Decision: 2026-10-18 — Reuse current WASM ABI with no AD-5 amendment; tangent via core_math eval plus render overlay, markers via existing query_hover and sampler path.
 - Decision: 2026-10-18 — Leave solver contract (viewport scan resolution, POLE_THRESHOLD value, 250-benchmark location) to stories; AD-3 already fixes differentiate-then-simplify and sign-change-then-Brent.
 - Decision: 2026-10-18 — Partial gate on epic-scaffold-tracer: native core_math diff/simplify/solver stories may proceed before tracer finishes; only marker/tangent integration waits on working parse-eval-render pipeline and wasm_bridge surface.
+- Decision: 2026-10-18 — Tracer bullet is entry 1 (polynomial diff-simplify-tangent eval stubbing marker shape); entry 2 (Brent roots + pole guard) next as least-sure; entries 3-4 split diff into transcendental-chain then rational-quotient hardening; entries 5-7 extrema, render integration, 250-suite; entry 8 refactor sweep. Native-only tracer suffices; render path proved in entry 6.
