@@ -61,5 +61,6 @@ A professor saves their configured demonstration and shares a shortlink; student
 ## Notes
 
 - Decision: 2026-10-18 — Adopt `ux-workspace-persistence` DESIGN.md and EXPERIENCE.md final as companions; spine wins on conflict.
+- Decision: 2026-10-18 — Tracer is entry 1 full-cycle share-load; least-sure store swap (entry 2) second alongside load wiring (entry 3) over the entry 1 contract; edge states (entry 4) need store+load; panel polish (entry 5) needs schema+load; sweep (entry 6) closes.
 - Assumption: Store is `sqlx` SQLite file keeping the `put/get` interface; slug is random 48-bit retry in the 8-char URL-safe alphabet (stories confirm).
 - Assumption: Exact microcopy strings, accent hue, panel padding, panel-stays-open copy, manual Share retry, offline disable, tablet same-layout, and `aria-live` polite region follow the UX spines (build carries them).

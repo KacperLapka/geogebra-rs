@@ -1,0 +1,68 @@
+# Epic 5 — workspace persistence breakdown, in build order.
+# Table order is build order. `id` is permanent, never reused.
+
+[[entry]]
+id = 1
+type = "story"
+title = "Tracer bullet: share link restores identical session"
+description = "Thinnest serialize, POST slug, and load path for a styled session: version 1 JSON within 10KB, shortlink slug, primary /w/<slug> plus ?s=<slug> fallback restoring identical functions, params, and viewport."
+verify = "Dev shares f(x)=a*x^2 in npm run dev, opens the link on a second device profile, and sees the identical curves, sliders, and viewport go live."
+covers = ["R1", "R2", "R3"]
+after = ["1.6"]
+hitl = false
+risk = "medium"
+
+[[entry]]
+id = 2
+type = "story"
+title = "SQLite store with fast unique slugs"
+description = "Builds on entry 1 POST contract to swap the store body to a sqlx SQLite file keeping put/get, with random retry 8-char URL-safe slugs under 50ms keeping 413 and 404 behavior."
+verify = "cargo test shows unique URL-safe 8-char slugs persisting across restarts with save/load round-trips under 50ms."
+covers = ["R2"]
+after = [1]
+hitl = false
+risk = "medium"
+
+[[entry]]
+id = 3
+type = "story"
+title = "Load view restore wiring"
+description = "Builds on entry 1 schema to wire /w/<slug> and ?s=<slug> replace-all restore of functions, slider params, viewport, and opaque style, resuming normal interaction with no accounts."
+verify = "Dev opens both link forms in npm run dev and sees identical functions, slider values, and viewport with live curves following slider drags."
+covers = ["R3"]
+after = [1]
+hitl = false
+risk = "low"
+
+[[entry]]
+id = 4
+type = "story"
+title = "Share and load edge states"
+description = "Builds on entries 2-3 contracts to show one status line for unknown slug 404, oversize 413 with manual retry, and offline disable, each leaving the local workspace intact."
+verify = "Dev triggers a mistyped slug, an oversize share, and offline mode and sees the in-place note each time with the demo untouched."
+covers = ["R4"]
+after = [2, 3]
+hitl = false
+risk = "low"
+
+[[entry]]
+id = 5
+type = "story"
+title = "Share panel and access polish"
+description = "Builds on entries 1 and 3 to land the header Share button, anchored panel with slug field plus copy and manual fallback, Esc close with focus return, aria-live status, and identical projector and tablet read-only layout."
+verify = "Dev completes a keyboard-only share and load pass with a screen reader announcing states and the projector matching pixel structure."
+covers = ["R2", "R5"]
+after = [1, 3]
+hitl = false
+risk = "low"
+
+[[entry]]
+id = 6
+type = "story"
+title = "Refactor sweep"
+description = "Cleanup only from plans and review findings deferred in this epic; no pushed scope, new scope is a new story."
+verify = "cargo test, the API round-trip checks, and the Lena-to-Milo share demo still pass after cleanup."
+covers = ["R1", "R2", "R3", "R4", "R5"]
+after = [1, 2, 3, 4, 5]
+hitl = false
+risk = "low"
