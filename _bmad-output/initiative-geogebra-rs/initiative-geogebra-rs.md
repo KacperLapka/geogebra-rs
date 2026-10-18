@@ -2,10 +2,8 @@
 type: initiative
 title: "Zero-latency mathematical visualization and analytical calculus platform with lightweight workspace sharing"
 parent: none
-sources:
-  - "_bmad-output/initiative-geogebra-rs/prd-geogebra-rs/prd-geogebra-rs.md"
-companions:
-  - "_bmad-output/initiative-geogebra-rs/glossary.md"
+sources: ["_bmad-output/initiative-geogebra-rs/prd-geogebra-rs/prd-geogebra-rs.md"]
+companions: ["_bmad-output/initiative-geogebra-rs/glossary.md", "_bmad-output/initiative-geogebra-rs/architecture-geogebra-rs/architecture-geogebra-rs.md"]
 after: []
 risk: medium
 ---
@@ -65,16 +63,19 @@ For mathematics students and educators, GeoGebra RS provides zero-latency client
 - Out of scope (Implicit/Parametric): Implicit curve relations ($x^2 + y^2 = r^2$) and parametric curves are deferred beyond MVP (prd Section 9.2).
 - Out of scope (Auth): User accounts, authentication, passwords, or team permissions are not part of MVP (prd Section 9.2).
 - Out of scope (General CAS): Arbitrary symbolic algebra simplification and general polynomial factorization are deferred beyond MVP (prd Section 9.2).
+- Out of scope (SVG export): High-resolution vector SVG export from WASM engine deferred beyond MVP per Decision 2026-10-18 (prd Section 11 Q2).
+- Out of scope (Link expiry): Workspace link expiry/TTL retention deferred beyond MVP; MVP links are permanent per Decision 2026-10-18.
 
 ## References
 
 - prd — `_bmad-output/initiative-geogebra-rs/prd-geogebra-rs/prd-geogebra-rs.md`, sections 1–11
 - glossary — `_bmad-output/initiative-geogebra-rs/glossary.md`
+- architecture — `_bmad-output/initiative-geogebra-rs/architecture-geogebra-rs/architecture-geogebra-rs.md`, AD-1 through AD-6
 
 ## Notes
 
 - Assumption: Target user browsers support WebGPU natively or provide compatible WebGL2 support for wgpu (prd Section 11).
 - Assumption: Axum persistence backend utilizes SQLite or lightweight storage without user authentication for workspace state (prd Section 11).
 - Assumption: Calculus curriculum focuses primarily on single-variable explicit functions $y = f(x)$ on the Cartesian plane (prd Section 11).
-- Open question: Should exported workspace links expire after a retention window (e.g., 90 days) or remain indefinitely accessible (prd Section 11)?
-- Open question: Should the WASM engine provide direct high-resolution vector SVG export for academic publishing (prd Section 11)?
+- Decision (2026-10-18): Workspace links are permanent for MVP; 90-day expiry deferred beyond MVP, retires R13 (id never reused). Supersedes 90-day expiry decision.
+- Decision (2026-10-18): SVG export deferred beyond MVP as out-of-scope. Supersedes SVG question.
