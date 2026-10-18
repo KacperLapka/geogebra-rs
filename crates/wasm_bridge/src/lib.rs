@@ -7,9 +7,9 @@
 //!
 //! Exported surface:
 //! `parse_and_validate`, `set_function`, `update_param`, `update_viewport`,
-//! `query_hover` (AD-5) plus tracer helpers `sample_points`,
-//! `serialize_workspace`, `set_canvas_size`, `gpu_status`, `set_gpu_status`
-//! (owned by follow-up work).
+//! `query_hover` (AD-5) plus `serialize_workspace` (workspace JSON owned
+//! shape for Epic 5) and tracer helpers `sample_points`,
+//! `set_canvas_size`, `gpu_status`, `set_gpu_status`.
 
 use std::collections::HashMap;
 use std::sync::{Mutex, OnceLock};
@@ -100,11 +100,22 @@ pub struct HoverResult {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Workspace {
+    /// Schema version. Always `1` in this epic; Epic 5 forwards it as
+    /// `SaveBody.version` (AD-6) and rejects `0` / missing.
     pub version: u32,
+    /// Function id -> last accepted formula text (e.g. `{"f": "a*x^2"}`).
     pub functions: HashMap<String, String>,
+    /// Slider-bound parameters (e.g. `{"a": 2.0}`). Superset of names used
+    /// by `functions`; unknown names evaluate to `NaN`, never panic.
     pub params: HashMap<String, f64>,
+    /// Viewport owned by the session; Svelte never holds its own copy (AD-5).
     pub viewport: ViewportDto,
 }
+
+/// Workspace JSON budget owned by this epic for Epic 5 (R11): a tracer
+/// workspace with one function, a handful of params, and a viewport must
+/// serialize to well under this limit. Epic 5 POSTs the same document.
+pub const MAX_WORKSPACE_JSON_BYTES: usize = 10 * 1024;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct ViewportDto {
@@ -337,7 +348,15 @@ pub fn set_gpu_status(status: &str) {
     session().lock().unwrap().gpu = GpuStatus::from_str(status);
 }
 
-/// Workspace snapshot stub owned by this epic for Epic 5 (`version: 1`).
+/// Workspace snapshot owned by this epic for Epic 5 (`version: 1`).
+///
+/// Owned JSON shape: `{version:1, functions:{id:formula}, params:{name:value},
+/// viewport:{x_min,x_max,y_min,y_max}}`. Svelte reads it back only through
+/// this function and restores it through the existing ABI
+/// (`set_function` + `update_param` + `update_viewport`) — no new ABI
+/// needed (AD-5). Epic 5 POSTs this document verbatim; `version` travels as
+/// `SaveBody.version` (AD-6). Typical tracer payloads are a few hundred
+/// bytes, far under [`MAX_WORKSPACE_JSON_BYTES`].
 #[wasm_bindgen]
 pub fn serialize_workspace() -> String {
     let s = session().lock().unwrap();
@@ -487,5 +506,95 @@ mod tests {
         set_gpu_status("nonsense");
         let fallback: serde_json::Value = parse_json(&gpu_status());
         assert_eq!(fallback["status"], "cpu-fallback");
+    }
+
+    #[test]
+    fn slider_sweep_updates_curve_in_real_time() {
+        let _guard = test_lock().lock().unwrap();
+        reset_session();
+        let ok: ParseOk = parse_json(&set_function("f", "a*x^2"));
+        assert_eq!(ok.params, vec!["a".to_string()]);
+        update_viewport(-10.0, 10.0, -10.0, 10.0);
+        // Sweep slider `a`: y at x=2 must track a*x^2 exactly, no re-parse.
+        for (a, want) in [(1.0, 4.0), (2.0, 8.0), (0.5, 2.0), (-1.0, -4.0)] {
+            update_param("a", a);
+            let sample: serde_json::Value = parse_json(&sample_points(5));
+            let pts = sample["points"].as_array().unwrap();
+            // 5 points across [-10,10]: index 3 is x=5? index mapping:
+            // x_i = -10 + 20*i/4, so check x=10 corner scales with `a`.
+            let corner = pts[4][1].as_f64().unwrap();
+            assert!((corner - a * 100.0).abs() < 1e-9, "a={a}: {corner}");
+            // Direct eval path the sampler reads: HashMap params, no globals.
+            let s = session().lock().unwrap();
+            let expr = active_expr(&s).unwrap();
+            assert!((expr.eval(2.0, &s.params) - want).abs() < 1e-12);
+        }
+    }
+
+    #[test]
+    fn slider_rejects_non_finite_and_bad_idents() {
+        let _guard = test_lock().lock().unwrap();
+        reset_session();
+        let _: ParseOk = parse_json(&set_function("f", "a*x^2"));
+        update_param("a", 2.0);
+        update_param("a", f64::NAN);
+        update_param("a", f64::INFINITY);
+        update_param("", 5.0);
+        update_param("9lives", 5.0);
+        update_param("x", 5.0);
+        let ws: Workspace = parse_json(&serialize_workspace());
+        assert_eq!(ws.params.get("a").unwrap(), &2.0);
+        assert!(!ws.params.contains_key(""));
+        assert!(!ws.params.contains_key("9lives"));
+        assert!(!ws.params.contains_key("x"));
+    }
+
+    #[test]
+    fn workspace_json_shape_version_1_under_10kb() {
+        let _guard = test_lock().lock().unwrap();
+        reset_session();
+        let _: ParseOk = parse_json(&set_function("f", "a*x^2"));
+        update_param("a", 2.5);
+        update_viewport(-10.0, 10.0, -10.0, 10.0);
+        let raw = serialize_workspace();
+        assert!(raw.len() < MAX_WORKSPACE_JSON_BYTES, "len={}", raw.len());
+        let v: serde_json::Value = parse_json(&raw);
+        assert_eq!(v["version"], 1);
+        assert_eq!(v["functions"]["f"], "a*x^2");
+        assert_eq!(v["params"]["a"], 2.5);
+        for key in ["x_min", "x_max", "y_min", "y_max"] {
+            assert!(v["viewport"][key].is_number(), "missing {key}");
+        }
+        let ws: Workspace = parse_json(&raw);
+        assert_eq!(ws.version, 1);
+        assert_eq!(ws.functions.get("f").unwrap(), "a*x^2");
+    }
+
+    #[test]
+    fn workspace_round_trip_restores_identical_session() {
+        let _guard = test_lock().lock().unwrap();
+        reset_session();
+        let _: ParseOk = parse_json(&set_function("f", "a*x^2"));
+        update_param("a", 2.0);
+        update_viewport(-5.0, 5.0, -5.0, 5.0);
+        let raw = serialize_workspace();
+        let ws: Workspace = parse_json(&raw);
+        // Restore through the existing ABI only (AD-5): the Epic 5 recipe.
+        reset_session();
+        for (id, formula) in &ws.functions {
+            let ok: ParseOk = parse_json(&set_function(id, formula));
+            assert!(ok.params.contains(&"a".to_string()));
+        }
+        for (k, v) in &ws.params {
+            update_param(k, *v);
+        }
+        update_viewport(
+            ws.viewport.x_min,
+            ws.viewport.x_max,
+            ws.viewport.y_min,
+            ws.viewport.y_max,
+        );
+        let again: Workspace = parse_json(&serialize_workspace());
+        assert_eq!(ws, again);
     }
 }

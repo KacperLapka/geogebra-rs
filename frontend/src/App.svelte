@@ -47,6 +47,8 @@
   }
 
   function handleParam(name, value) {
+    // R2 real-time path: update_param + resample synchronously so the
+    // curve follows the slider drag within the same frame (<16ms budget).
     if (!Number.isFinite(value)) return;
     backend.updateParam(name, value);
     params = { ...params, [name]: value };
@@ -107,8 +109,10 @@
   <Sliders {params} onParam={handleParam} />
 
   {#if workspace}
+    <!-- Workspace JSON owned shape for Epic 5: {version:1, functions, params, viewport}.
+         Restored via setFunction + updateParam + updateViewport (AD-5, no new ABI). -->
     <details class="workspace">
-      <summary>workspace JSON (stub, version {workspace.version})</summary>
+      <summary>workspace JSON (version {workspace.version})</summary>
       <pre>{JSON.stringify(workspace, null, 2)}</pre>
     </details>
   {/if}
