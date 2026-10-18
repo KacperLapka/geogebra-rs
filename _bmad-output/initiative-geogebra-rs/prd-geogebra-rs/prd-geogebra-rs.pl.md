@@ -256,7 +256,7 @@ mindmap
 | **Efektywność Działania (Performance Efficiency)** | `NFR-PERF-01` | Wyznaczenie punktów krzywej i odświeżenie bufora GPU dla 2000 próbek musi zająć $< 8\text{ ms}$. |
 | **Efektywność Działania (Performance Efficiency)** | `NFR-PERF-02` | Pętla renderowania `wgpu` musi utrzymywać stałe 60 FPS podczas ciągłego przesuwania i skalowania widoku przez użytkownika. |
 | **Użyteczność (Usability)** | `NFR-USAB-01` | Informacja o błędzie składniowym w formule musi pojawiać się w czasie $< 50\text{ ms}$ od momentu zatrzymania wpisywania tekstu. |
-| **Niezawodność (Reliability)** | `NFR-RELI-01` | Wprowadzenie funkcji z punktami osobliwymi (np. $1/x$, $\tan(x)$) nie może wywołać błędu panic w Rust, propagacji wartości NaN w buforach ani utraty kontekstu GPU. |
+| **Niezawodność (Reliability)** | `NFR-RELI-01` | Wprowadzenie funkcji z punktami osobliwymi (np. `1/x`, `tan(x)`) nie może wywołać błędu panic w Rust, propagacji wartości NaN w buforach ani utraty kontekstu GPU. |
 | **Niezawodność (Reliability)** | `NFR-RELI-02` | W przypadku braku dostępności WebGPU w przeglądarce klienta silnik musi automatycznie przełączyć się na WebGL2 bez przerwania działania aplikacji. |
 | **Bezpieczeństwo (Security)** | `NFR-SECU-01` | Wprowadzane wzory muszą być interpretowane wyłącznie przez bezpieczny parser AST; jakiekolwiek wywołania typu `eval` lub wykonywanie obcego kodu są bezwzględnie zablokowane. |
 | **Bezpieczeństwo (Security)** | `NFR-SECU-02` | API Axum musi odrzucać żądania o rozmiarze przekraczającym $64\text{ KB}$ w celu ochrony przed atakami typu Denial of Service (DoS). |
@@ -276,10 +276,10 @@ mindmap
 * Zapisywanie i odtwarzanie przestrzeni roboczej za pośrednictwem lekkiego API Axum.
 
 ### 9.2 Elementy Poza Zakresem MVP (Przyszłe Wersje)
-* [NON-GOAL MVP] Trójwymiarowe wykresy funkcji dwóch zmiennych $z = f(x, y)$.
-* [NON-GOAL MVP] Wykresy funkcji uwikłanych (np. $x^2 + y^2 = r^2$) oraz krzywych parametrycznych.
-* [NON-GOAL MVP] Rejestracja kont użytkowników, logowanie, hasła czy uprawnienia zespołowe.
-* [NON-GOAL MVP] Pełny uniwersalny system algebry komputerowej (np. zaawansowana faktoryzacja wielomianów wysokich stopni).
+* **NON-GOAL (MVP):** Trójwymiarowe wykresy funkcji dwóch zmiennych, np. `$z = f(x, y)$`.
+* **NON-GOAL (MVP):** Wykresy funkcji uwikłanych (takich jak `$x^2 + y^2 = r^2$`) oraz krzywych parametrycznych.
+* **NON-GOAL (MVP):** Rejestracja kont użytkowników, logowanie, hasła czy uprawnienia zespołowe.
+* **NON-GOAL (MVP):** Pełny uniwersalny system algebry komputerowej (np. zaawansowana faktoryzacja wielomianów wysokich stopni).
 
 ---
 

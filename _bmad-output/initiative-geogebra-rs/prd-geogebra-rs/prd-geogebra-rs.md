@@ -40,7 +40,7 @@ Existing computer algebra and graphing systems either suffer from server latency
 * **Demographics:** University mathematics lecturer or high school educator.
 * **Context:** Presenting calculus concepts on a lecture projector, creating visual problem sets, or demonstrating limits and asymptotes in real time.
 * **Jobs To Be Done (JTBD):**
-  - Live-demonstrate mathematical concepts (e.g., tangent lines approaching a curve, behavior at asymptotes) with 60 FPS smoothness.
+  - Live-demonstrate mathematical concepts (e.g., secant lines approaching the tangent line, tangent tracking along a curve, behavior at asymptotes) with 60 FPS smoothness.
   - Generate clean, mathematically rigorous plots with key features (roots, extrema, inflection points) labeled automatically.
   - Save a customized workspace state and distribute a shareable shortlink to hundreds of students instantly.
 * **Frustrations:** Tools that fail on edge cases (e.g., vertical asymptotes producing erroneous vertical connecting lines, removable singularities not indicated), slow cloud save/load workflows.
@@ -255,7 +255,7 @@ mindmap
 | **Performance Efficiency** | `NFR-PERF-01` | Curve evaluation and vertex buffer update must complete in $< 8\text{ ms}$ for 2000 sampled points. |
 | **Performance Efficiency** | `NFR-PERF-02` | `wgpu` render loop must maintain steady 60 FPS during user drag and zoom interactions. |
 | **Usability** | `NFR-USAB-01` | Syntax errors in the formula bar must be highlighted within $< 50\text{ ms}$ of keystroke pause. |
-| **Reliability** | `NFR-RELI-01` | Functions with singularities (e.g., $1/x$, $\tan(x)$) must never cause numerical panic, NaN propagation in buffers, or WebGL context loss. |
+| **Reliability** | `NFR-RELI-01` | Functions with singularities (e.g., `1/x`, `tan(x)`) must never cause numerical panic, NaN propagation in buffers, or WebGL context loss. |
 | **Reliability** | `NFR-RELI-02` | If WebGPU initialization fails, the engine must gracefully fallback to WebGL2 without crashing. |
 | **Security** | `NFR-SECU-01` | Expression input must strictly pass through an AST parser; dynamic evaluation (`eval` or arbitrary code execution) is strictly prohibited. |
 | **Security** | `NFR-SECU-02` | Axum API payload size must be restricted to $\le 64\text{ KB}$ to prevent Denial-of-Service attacks. |
@@ -275,10 +275,10 @@ mindmap
 * Saving and loading workspaces via lightweight Axum API.
 
 ### 9.2 Out of Scope for MVP (Future Roadmap)
-* [NON-GOAL for MVP] 3D function plotting ($z = f(x, y)$).
-* [NON-GOAL for MVP] Implicit curve plotting (e.g., $x^2 + y^2 = r^2$) and parametric curve rendering.
-* [NON-GOAL for MVP] User accounts, authentication, passwords, or team collaboration permissions.
-* [NON-GOAL for MVP] Arbitrary CAS algebra simplification (e.g., full polynomial factorization of higher degree polynomials).
+* **NON-GOAL (MVP):** 3D function plotting, e.g. `$z = f(x, y)$`.
+* **NON-GOAL (MVP):** Implicit curve plotting (such as `$x^2 + y^2 = r^2$`) and parametric curve rendering.
+* **NON-GOAL (MVP):** User accounts, authentication, passwords, or team collaboration permissions.
+* **NON-GOAL (MVP):** Arbitrary CAS algebra simplification (e.g., full polynomial factorization of higher degree polynomials).
 
 ---
 
