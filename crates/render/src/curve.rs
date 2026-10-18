@@ -46,6 +46,11 @@ pub fn sample_curve(
 /// Refines any interval whose midpoint deviates from the chord by more than
 /// `tol_y`. `max_points` caps the output; `tol_y <= 0` or non-finite falls
 /// back to the default viewport-derived tolerance.
+///
+/// The negated width comparison below is deliberate NaN-safe ordering: a NaN
+/// width must take the early return, and `!(w > 0.0)` rejects NaN where
+/// `w <= 0.0` would not.
+#[allow(clippy::neg_cmp_op_on_partial_ord)]
 pub fn sample_curve_adaptive(
     expr: &Expr,
     params: &HashMap<String, f64>,
@@ -60,7 +65,8 @@ pub fn sample_curve_adaptive(
         default_tolerance(viewport)
     };
     let width = viewport.width();
-    if !(width > 0.0) || !width.is_finite() {
+    let degenerate = !(width > 0.0) || !width.is_finite();
+    if degenerate {
         return Vec::new();
     }
 
@@ -224,9 +230,10 @@ mod tests {
         assert!(pts.iter().any(|p| p[1].is_nan()));
         // No vertical spike: neighbors of a break are not joined across it
         // with huge values; every finite y is within the pole guard.
-        assert!(pts
-            .iter()
-            .all(|p| p[1].is_nan() || p[1].abs() <= POLE_BREAK));
+        assert!(
+            pts.iter()
+                .all(|p| p[1].is_nan() || p[1].abs() <= POLE_BREAK)
+        );
     }
 
     #[test]

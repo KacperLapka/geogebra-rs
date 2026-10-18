@@ -18,6 +18,10 @@ pub fn grid_ticks(min: f64, max: f64, max_ticks: usize) -> Vec<f64> {
 }
 
 /// Major-tick step for a range, or `0.0` when the range is degenerate.
+///
+/// The negated comparison is deliberate NaN-safe ordering: NaN bounds must
+/// yield `0.0`, and `!(a < b)` rejects NaN where `a >= b` would not.
+#[allow(clippy::neg_cmp_op_on_partial_ord)]
 pub fn tick_step(min: f64, max: f64, max_ticks: usize) -> f64 {
     if !(min < max) || max_ticks == 0 {
         return 0.0;
@@ -76,7 +80,11 @@ pub fn tick_decimals(step: f64) -> usize {
 /// Snaps tiny residues (including `-0.0`) to `"0"`.
 pub fn format_tick(step: f64, value: f64) -> String {
     let decimals = tick_decimals(step);
-    let v = if value.abs() < step * 1e-9 { 0.0 } else { value };
+    let v = if value.abs() < step * 1e-9 {
+        0.0
+    } else {
+        value
+    };
     if v == 0.0 {
         return "0".to_string();
     }
@@ -92,10 +100,7 @@ pub fn viewport_ticks(viewport: &Viewport, max_ticks: usize) -> (Vec<f64>, Vec<f
 }
 
 /// Minor ticks for both axes of a viewport.
-pub fn viewport_minor_ticks(
-    viewport: &Viewport,
-    max_ticks: usize,
-) -> (Vec<f64>, Vec<f64>) {
+pub fn viewport_minor_ticks(viewport: &Viewport, max_ticks: usize) -> (Vec<f64>, Vec<f64>) {
     (
         minor_ticks(viewport.x_min, viewport.x_max, max_ticks),
         minor_ticks(viewport.y_min, viewport.y_max, max_ticks),

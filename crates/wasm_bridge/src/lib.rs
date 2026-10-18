@@ -203,13 +203,21 @@ pub fn update_param(key: &str, value: f64) {
     if key == "x" || !is_ident(key) || !value.is_finite() {
         return;
     }
-    session().lock().unwrap().params.insert(key.to_string(), value);
+    session()
+        .lock()
+        .unwrap()
+        .params
+        .insert(key.to_string(), value);
 }
 
 /// Move the visible window. Ignores degenerate ranges.
 ///
 /// Accepted updates bump the viewport revision so the canvas loop can skip
 /// redundant uniform uploads; rejected input leaves revision untouched.
+///
+/// The negated comparison is deliberate NaN-safe ordering: NaN bounds must
+/// reject, and `!(a < b)` rejects NaN where `a >= b` would not.
+#[allow(clippy::neg_cmp_op_on_partial_ord)]
 #[wasm_bindgen]
 pub fn update_viewport(x_min: f64, x_max: f64, y_min: f64, y_max: f64) {
     if !(x_min < x_max) || !(y_min < y_max) {
@@ -244,6 +252,10 @@ pub fn set_canvas_size(w: f64, h: f64) {
 ///
 /// Svelte never performs this transform itself; it calls [`query_hover`] and
 /// displays the returned coordinates verbatim.
+///
+/// Negated comparisons below are deliberate NaN-safe ordering: non-finite
+/// canvas sizes and pixels must take the degenerate path.
+#[allow(clippy::neg_cmp_op_on_partial_ord)]
 fn query_hover_core(
     viewport: &Viewport,
     canvas_w: f64,
@@ -345,7 +357,7 @@ pub fn gpu_status() -> String {
 /// `cpu-fallback` so the loop can never observe an invalid backend.
 #[wasm_bindgen]
 pub fn set_gpu_status(status: &str) {
-    session().lock().unwrap().gpu = GpuStatus::from_str(status);
+    session().lock().unwrap().gpu = GpuStatus::from_wire(status);
 }
 
 /// Workspace snapshot owned by this epic for Epic 5 (`version: 1`).
@@ -371,8 +383,7 @@ pub fn serialize_workspace() -> String {
 
 fn is_ident(s: &str) -> bool {
     !s.is_empty()
-        && s.chars()
-            .all(|c| c.is_alphanumeric() || c == '_')
+        && s.chars().all(|c| c.is_alphanumeric() || c == '_')
         && !s.chars().next().unwrap().is_numeric()
 }
 

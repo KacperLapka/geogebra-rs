@@ -241,8 +241,7 @@ mod tests {
 
     fn eval_str(formula: &str, x: f64, params: &[(&str, f64)]) -> f64 {
         let expr = parse(formula).unwrap();
-        let map: HashMap<String, f64> =
-            params.iter().map(|(k, v)| (k.to_string(), *v)).collect();
+        let map: HashMap<String, f64> = params.iter().map(|(k, v)| (k.to_string(), *v)).collect();
         expr.eval(x, &map)
     }
 
@@ -390,9 +389,24 @@ mod tests {
         }
         // Each message names the offending construct.
         assert!(parse("").unwrap_err().message.contains("empty"));
-        assert!(parse("sin()").unwrap_err().message.contains("needs one argument"));
-        assert!(parse("sin(x,y)").unwrap_err().message.contains("exactly one"));
-        assert!(parse("frobnicate(x)").unwrap_err().message.contains("unknown function"));
+        assert!(
+            parse("sin()")
+                .unwrap_err()
+                .message
+                .contains("needs one argument")
+        );
+        assert!(
+            parse("sin(x,y)")
+                .unwrap_err()
+                .message
+                .contains("exactly one")
+        );
+        assert!(
+            parse("frobnicate(x)")
+                .unwrap_err()
+                .message
+                .contains("unknown function")
+        );
         assert!(parse("(x").unwrap_err().message.contains("expected ')'"));
         assert!(parse("x)").unwrap_err().message.contains("unexpected"));
     }

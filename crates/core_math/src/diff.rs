@@ -23,11 +23,15 @@ fn diff_raw(expr: &Expr, var: &str) -> Expr {
             }
         }
         Expr::Param { .. } => Expr::zero(span),
-        Expr::Unary { op, expr: inner, .. } => match op {
+        Expr::Unary {
+            op, expr: inner, ..
+        } => match op {
             UnaryOp::Neg => neg(diff_raw(inner, var), span),
             UnaryOp::Pos => diff_raw(inner, var),
         },
-        Expr::Binary { op, left, right, .. } => match op {
+        Expr::Binary {
+            op, left, right, ..
+        } => match op {
             BinOp::Add => add(diff_raw(left, var), diff_raw(right, var), span),
             BinOp::Sub => sub(diff_raw(left, var), diff_raw(right, var), span),
             BinOp::Mul => {
@@ -116,7 +120,11 @@ fn diff_call(func: Func, inner: Expr, span: Span) -> Expr {
         // sec^2 = 1/cos^2
         Func::Tan => div(
             Expr::one(span),
-            pow(call(Func::Cos, inner.clone(), span), Expr::number(2.0, span), span),
+            pow(
+                call(Func::Cos, inner.clone(), span),
+                Expr::number(2.0, span),
+                span,
+            ),
             span,
         ),
         Func::Exp => call(Func::Exp, inner, span),

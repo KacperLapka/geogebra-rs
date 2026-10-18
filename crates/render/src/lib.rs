@@ -11,9 +11,7 @@ pub mod grid;
 pub mod pipeline;
 pub mod viewport;
 
-pub use curve::{
-    MAX_POINTS, POLE_BREAK, sample_curve, sample_curve_adaptive, sample_points_f32,
-};
+pub use curve::{MAX_POINTS, POLE_BREAK, sample_curve, sample_curve_adaptive, sample_points_f32};
 pub use grid::{format_tick, grid_ticks, minor_ticks, tick_decimals, tick_step};
 pub use pipeline::{FRAME_BUDGET_MS, FrameStats, GpuStatus, Renderer, ViewportUniform};
 pub use viewport::Viewport;

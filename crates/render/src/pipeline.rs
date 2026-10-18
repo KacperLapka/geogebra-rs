@@ -42,7 +42,7 @@ impl GpuStatus {
     }
 
     /// Parse a wire name back; unknown input maps to [`GpuStatus::CpuFallback`].
-    pub fn from_str(s: &str) -> Self {
+    pub fn from_wire(s: &str) -> Self {
         match s {
             "webgpu" => GpuStatus::WebGpu,
             "webgl2" => GpuStatus::WebGl2,
@@ -312,6 +312,10 @@ impl Renderer {
     /// Validated viewport update: recomputes the uniform and bumps the
     /// revision. Degenerate or non-finite ranges are rejected and the
     /// previous viewport is kept, so the loop never renders a blank frame.
+    ///
+    /// The negated comparison is deliberate NaN-safe ordering: NaN inputs
+    /// must reject, and `!(a < b)` rejects NaN where `a >= b` would accept.
+    #[allow(clippy::neg_cmp_op_on_partial_ord)]
     pub fn update_viewport(&mut self, next: Viewport) -> bool {
         if !(next.x_min < next.x_max) || !(next.y_min < next.y_max) {
             return false;
@@ -385,26 +389,38 @@ mod tests {
 
     #[test]
     fn requests_primary_and_gl_in_order() {
-        assert_eq!(requested_backends(), wgpu::Backends::PRIMARY | wgpu::Backends::GL);
-        assert_eq!(backend_attempts(), [wgpu::Backends::PRIMARY, wgpu::Backends::GL]);
+        assert_eq!(
+            requested_backends(),
+            wgpu::Backends::PRIMARY | wgpu::Backends::GL
+        );
+        assert_eq!(
+            backend_attempts(),
+            [wgpu::Backends::PRIMARY, wgpu::Backends::GL]
+        );
     }
 
     #[test]
     fn classifies_adapter_backends() {
         assert_eq!(classify_backend(wgpu::Backend::Gl), GpuStatus::WebGl2);
-        assert_eq!(classify_backend(wgpu::Backend::BrowserWebGpu), GpuStatus::WebGpu);
+        assert_eq!(
+            classify_backend(wgpu::Backend::BrowserWebGpu),
+            GpuStatus::WebGpu
+        );
         assert_eq!(classify_backend(wgpu::Backend::Vulkan), GpuStatus::WebGpu);
         assert_eq!(classify_backend(wgpu::Backend::Metal), GpuStatus::WebGpu);
         assert_eq!(classify_backend(wgpu::Backend::Dx12), GpuStatus::WebGpu);
-        assert_eq!(classify_backend(wgpu::Backend::Noop), GpuStatus::CpuFallback);
+        assert_eq!(
+            classify_backend(wgpu::Backend::Noop),
+            GpuStatus::CpuFallback
+        );
     }
 
     #[test]
     fn status_wire_names_round_trip() {
         for s in [GpuStatus::CpuFallback, GpuStatus::WebGpu, GpuStatus::WebGl2] {
-            assert_eq!(GpuStatus::from_str(s.as_str()), s);
+            assert_eq!(GpuStatus::from_wire(s.as_str()), s);
         }
-        assert_eq!(GpuStatus::from_str("nonsense"), GpuStatus::CpuFallback);
+        assert_eq!(GpuStatus::from_wire("nonsense"), GpuStatus::CpuFallback);
     }
 
     #[test]
@@ -484,12 +500,7 @@ mod tests {
         let mut r = Renderer::new(Viewport::default());
         assert!(!r.update_viewport(Viewport::new(5.0, -5.0, 0.0, 1.0)));
         assert!(!r.update_viewport(Viewport::new(0.0, 1.0, 1.0, 1.0)));
-        assert!(!r.update_viewport(Viewport::new(
-            f64::NAN,
-            1.0,
-            0.0,
-            1.0
-        )));
+        assert!(!r.update_viewport(Viewport::new(f64::NAN, 1.0, 0.0, 1.0)));
         assert_eq!(r.viewport(), Viewport::default());
         assert_eq!(r.revision(), 0);
     }

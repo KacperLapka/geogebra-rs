@@ -20,6 +20,8 @@ async fn main() {
         .route("/api/workspaces", axum::routing::post(routes::save))
         .route("/api/workspaces/:slug", get(routes::load))
         .with_state(state);
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:3000").await.unwrap();
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:3000")
+        .await
+        .unwrap();
     axum::serve(listener, app).await.unwrap();
 }

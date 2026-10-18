@@ -22,10 +22,7 @@ pub struct SaveBody {
     pub workspace: Value,
 }
 
-pub async fn save(
-    State(store): State<Arc<Store>>,
-    body: axum::body::Bytes,
-) -> Response {
+pub async fn save(State(store): State<Arc<Store>>, body: axum::body::Bytes) -> Response {
     if body.len() > MAX_BODY_BYTES {
         return (StatusCode::PAYLOAD_TOO_LARGE, "workspace exceeds 64 KB").into_response();
     }
@@ -37,7 +34,11 @@ pub async fn save(
         return (StatusCode::BAD_REQUEST, "missing version").into_response();
     }
     let slug = store.put(parsed.workspace);
-    (StatusCode::CREATED, Json(serde_json::json!({ "slug": slug }))).into_response()
+    (
+        StatusCode::CREATED,
+        Json(serde_json::json!({ "slug": slug })),
+    )
+        .into_response()
 }
 
 pub async fn load(State(store): State<Arc<Store>>, Path(slug): Path<String>) -> Response {

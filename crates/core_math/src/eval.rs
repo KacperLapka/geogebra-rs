@@ -21,7 +21,9 @@ impl Expr {
                     UnaryOp::Pos => v,
                 }
             }
-            Expr::Binary { op, left, right, .. } => {
+            Expr::Binary {
+                op, left, right, ..
+            } => {
                 let l = left.eval(x, params);
                 let r = right.eval(x, params);
                 match op {
@@ -77,8 +79,14 @@ mod tests {
 
     #[test]
     fn evaluates_full_form_family_with_params() {
-        let cases: &[(&str, f64, &[(&str, f64)], f64)] = &[
-            ("a*x^2+b*x+c", 2.0, &[("a", 1.0), ("b", 2.0), ("c", 3.0)], 11.0),
+        type Case<'a> = (&'a str, f64, &'a [(&'a str, f64)], f64);
+        let cases: &[Case<'_>] = &[
+            (
+                "a*x^2+b*x+c",
+                2.0,
+                &[("a", 1.0), ("b", 2.0), ("c", 3.0)],
+                11.0,
+            ),
             ("(x+1)/(x-1)", 0.0, &[], -1.0),
             ("tan(x)", 0.0, &[], 0.0),
             ("ln(x+1)", 0.0, &[], 0.0),
@@ -87,7 +95,10 @@ mod tests {
         for (formula, x, ps, want) in cases {
             let expr = parse(formula).unwrap();
             let got = expr.eval(*x, &params(ps));
-            assert!((got - want).abs() < 1e-12, "{formula} x={x}: {got} vs {want}");
+            assert!(
+                (got - want).abs() < 1e-12,
+                "{formula} x={x}: {got} vs {want}"
+            );
         }
     }
 

@@ -15,4 +15,4 @@ pub use ast::{BinOp, Expr, Func, ParseError, Span, UnaryOp};
 pub use diff::differentiate;
 pub use parser::parse;
 pub use simplify::simplify;
-pub use solver::{brent, scan_sign_changes, POLE_THRESHOLD};
+pub use solver::{POLE_THRESHOLD, brent, scan_sign_changes};

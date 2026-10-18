@@ -4,7 +4,10 @@
 //! sqlx-backed store without touching routes.
 
 use std::collections::HashMap;
-use std::sync::{Mutex, atomic::{AtomicU64, Ordering}};
+use std::sync::{
+    Mutex,
+    atomic::{AtomicU64, Ordering},
+};
 
 const SLUG_ALPHABET: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
 
@@ -60,7 +63,10 @@ mod tests {
         let b = store.put(serde_json::json!({"version": 1}));
         assert_eq!(a.len(), 8);
         assert_ne!(a, b);
-        assert!(a.bytes().all(|c| c.is_ascii_alphanumeric() || c == b'-' || c == b'_'));
+        assert!(
+            a.bytes()
+                .all(|c| c.is_ascii_alphanumeric() || c == b'-' || c == b'_')
+        );
         assert_eq!(store.get(&a).unwrap(), serde_json::json!({"version": 1}));
         assert!(store.get("missing__").is_none());
     }

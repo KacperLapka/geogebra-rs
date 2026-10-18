@@ -1,6 +1,6 @@
 //! Constant folding, identity elimination, sign normalization (AD-3).
 
-use crate::ast::{BinOp, Expr, Func, Span, UnaryOp};
+use crate::ast::{BinOp, Expr, Span, UnaryOp};
 
 /// Simplify an expression: fold constants, drop identities, normalize signs.
 ///
@@ -9,11 +9,20 @@ use crate::ast::{BinOp, Expr, Func, Span, UnaryOp};
 pub fn simplify(expr: &Expr) -> Expr {
     match expr {
         Expr::Number { .. } | Expr::Variable { .. } | Expr::Param { .. } => expr.clone(),
-        Expr::Unary { op, expr: inner, span } => {
+        Expr::Unary {
+            op,
+            expr: inner,
+            span,
+        } => {
             let e = simplify(inner);
             simplify_unary(*op, e, *span)
         }
-        Expr::Binary { op, left, right, span } => {
+        Expr::Binary {
+            op,
+            left,
+            right,
+            span,
+        } => {
             let l = simplify(left);
             let r = simplify(right);
             simplify_binary(*op, l, r, *span)
@@ -41,7 +50,14 @@ fn simplify_unary(op: UnaryOp, e: Expr, span: Span) -> Expr {
         (UnaryOp::Neg, Expr::Number { value, .. }) => Expr::number(-value, span),
         (UnaryOp::Pos, Expr::Number { value, .. }) => Expr::number(value, span),
         // sign normalization: --x -> x, +-x -> -x
-        (UnaryOp::Neg, Expr::Unary { op: UnaryOp::Neg, expr, .. }) => *expr,
+        (
+            UnaryOp::Neg,
+            Expr::Unary {
+                op: UnaryOp::Neg,
+                expr,
+                ..
+            },
+        ) => *expr,
         (UnaryOp::Pos, inner) => inner,
         (op, inner) => Expr::Unary {
             op,
@@ -135,10 +151,10 @@ fn simplify_binary(op: BinOp, l: Expr, r: Expr, span: Span) -> Expr {
                     return l;
                 }
             }
-            if let Some(a) = as_num(&l) {
-                if a == 0.0 || a == 1.0 {
-                    return num(a, span);
-                }
+            if let Some(a) = as_num(&l)
+                && (a == 0.0 || a == 1.0)
+            {
+                return num(a, span);
             }
             binary(op, l, r, span)
         }
@@ -153,10 +169,6 @@ fn binary(op: BinOp, left: Expr, right: Expr, span: Span) -> Expr {
         span,
     }
 }
-
-/// Placeholder for `Func` so rustdoc links resolve in diff rules.
-#[allow(unused)]
-fn _func_link(_: Func) {}
 
 #[cfg(test)]
 mod tests {
