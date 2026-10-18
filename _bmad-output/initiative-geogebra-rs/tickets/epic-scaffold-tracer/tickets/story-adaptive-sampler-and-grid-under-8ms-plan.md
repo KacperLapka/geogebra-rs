@@ -3,7 +3,7 @@ title: 'Adaptive sampler and grid under 8ms'
 type: 'feature'
 ticket: 4
 created: '2026-10-18'
-status: 'in-review'
+status: done
 baseline_revision: '1fbf9d082045b63952709199985235b4b4844b6a'
 route: 'full'
 route_source: 'auto'

@@ -3,7 +3,7 @@ title: 'Full parser coverage with span errors under 50ms'
 type: 'feature'
 ticket: 3
 created: '2026-10-18'
-status: in-review
+status: done
 baseline_revision: 'd331618a7c60d0c8ae78644f44943ec036b19c90'
 route: 'full'
 route_source: 'auto'

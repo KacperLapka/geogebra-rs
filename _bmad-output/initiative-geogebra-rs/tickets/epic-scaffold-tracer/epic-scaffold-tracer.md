@@ -8,7 +8,7 @@ companions: ["_bmad-output/initiative-geogebra-rs/architecture-geogebra-rs/archi
 after: []
 risk: high
 refined: true
-status: in-progress
+status: done
 ---
 
 # Project scaffold and tracer bullet
@@ -66,3 +66,4 @@ A developer loads the browser app, types a function, sees a live curve, and hove
 - Decision: 2026-10-18 — Leave 60 FPS verification method to stories; declined spike for wgpu/WebGL2 fallback, risk surfaces in tracer story and fails fast.
 - Decision: 2026-10-18 — Refine from parent R1,R2,R8,R9 alone; no extra elicitation, no PRD/UX/architecture run.
 - Decision: 2026-10-18 — Tracer bullet is entry 1 (thin parse-plot-hover-slider with simplified sampler); entry 2 (wgpu fallback) next as least-sure; entries 3-6 harden parser, sampler/grid, hover, slider+JSON shape; entry 7 refactor sweep.
+- Decision: 2026-10-18 — Epic closed with 8/8 done (1.1-1.7 stories + 1.8 mount bug). Human confirmed plot + tracer demo good; headless evidence showed rust banner, canvas 731x420, no mount errors. WASM bundle linked via sync-pkg; AD-5 tracer helpers owned for Epic 5.

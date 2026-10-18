@@ -1,7 +1,7 @@
 ---
 title: "Tracer bullet: polynomial plots with hover and slider"
 ticket: 1
-status: in-review
+status: done
 baseline_revision: b332b181a59877b5321b45c536bea433281de969
 route: full
 route_source: auto

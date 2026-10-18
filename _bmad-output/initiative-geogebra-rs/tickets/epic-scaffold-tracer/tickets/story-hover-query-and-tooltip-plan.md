@@ -1,7 +1,7 @@
 ---
 title: "Hover query and tooltip"
 ticket: 5
-status: in-review
+status: done
 baseline_revision: 15015e94a68085f0641b498a38742daa96e8c318
 route: full
 route_source: auto

@@ -1,7 +1,7 @@
 ---
 title: "wgpu pipeline with WebGL2 fallback and viewport loop"
 ticket: 2
-status: in-review
+status: done
 baseline_revision: 8ae5d3d059e5fe1dd8e4e99a1c75362778c72a63
 route: full
 route_source: auto

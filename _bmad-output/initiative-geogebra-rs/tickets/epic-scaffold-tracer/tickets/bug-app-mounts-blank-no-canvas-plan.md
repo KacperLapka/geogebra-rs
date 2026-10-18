@@ -1,7 +1,7 @@
 ---
 title: "App mounts blank, no canvas"
 ticket: 8
-status: in-review
+status: done
 ---
 
 ## Implementation Notes

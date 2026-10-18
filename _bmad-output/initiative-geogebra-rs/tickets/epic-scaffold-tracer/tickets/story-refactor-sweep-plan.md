@@ -1,7 +1,7 @@
 ---
 title: "Refactor sweep"
 ticket: 7
-status: in-review
+status: done
 ---
 
 ## Implementation Notes

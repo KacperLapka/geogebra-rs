@@ -1,7 +1,7 @@
 ---
 title: "Slider binding and workspace JSON shape"
 ticket: 6
-status: in-review
+status: done
 baseline_revision: 2983090f39d1416028f8368dd90f674032fa973c
 route: full
 route_source: auto
