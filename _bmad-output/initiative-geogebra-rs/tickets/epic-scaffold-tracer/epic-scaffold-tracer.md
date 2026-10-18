@@ -8,6 +8,7 @@ companions: ["_bmad-output/initiative-geogebra-rs/architecture-geogebra-rs/archi
 after: []
 risk: high
 refined: true
+status: in-progress
 ---
 
 # Project scaffold and tracer bullet
