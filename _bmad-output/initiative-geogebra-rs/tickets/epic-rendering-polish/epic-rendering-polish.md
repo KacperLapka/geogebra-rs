@@ -61,6 +61,7 @@ A student or lecturer sees multiple styled curves rendered at 60 FPS with clear 
 
 ## Notes
 
+- Decision: 2026-10-18 — Tracer is entry 1 styled ribbon with shader contract; least-sure dash (entry 2) second; palette (entry 3) after dash to avoid shader/struct collision; grid (entry 4) parallels style lane; parity (entry 6) after style+grid; perf harness (entry 7) last verification; sweep (entry 8) closes.
 - Decision: 2026-10-18 — Refine (not close/drop); epic had refined:false, 0 stories, no implementation evidence for Closure.
 - Decision: 2026-10-18 — Amend AD-5 now with `set_function_style` + `set_function_visibility` (single shape, 5+2 surface); fixes parent "exactly four" count.
 - Decision: 2026-10-18 — Accept style defaults: 8-colour Okabe-Ito palette in order f -> f' -> f'' -> cycle, width 2.5 min / 3.5 default / 6.0 max, dash 8 on / 6 off screen-space DPR-aware.
