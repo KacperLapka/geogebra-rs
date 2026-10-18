@@ -144,6 +144,8 @@ export function createFallback() {
     functions: new Map(),
     params: new Map(),
     viewport: { x_min: -10, x_max: 10, y_min: -10, y_max: 10 },
+    viewport_revision: 0,
+    gpu: 'cpu-fallback',
     canvas: { w: 800, h: 600 }
   };
 
@@ -183,6 +185,7 @@ export function createFallback() {
       if (!(x0 < x1) || !(y0 < y1)) return;
       if (![x0, x1, y0, y1].every(Number.isFinite)) return;
       state.viewport = { x_min: x0, x_max: x1, y_min: y0, y_max: y1 };
+      state.viewport_revision += 1;
     },
     setCanvasSize(w, h) {
       if (w > 0 && h > 0 && Number.isFinite(w) && Number.isFinite(h)) state.canvas = { w, h };
@@ -226,6 +229,9 @@ export function createFallback() {
         params: Object.fromEntries(state.params),
         viewport: { ...state.viewport }
       };
+    },
+    gpuStatus() {
+      return { status: state.gpu, viewport_revision: state.viewport_revision };
     }
   };
 }

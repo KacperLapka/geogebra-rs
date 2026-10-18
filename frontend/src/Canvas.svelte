@@ -1,10 +1,14 @@
 <script>
-  let { points, viewport, grid, hover, onViewport, onHover, onLeave, onSize, children } = $props();
+  let { points, viewport, grid, hover, onViewport, onHover, onLeave, onSize, onFps, children } = $props();
 
   let canvas = $state(null);
   let ctx = $state(null);
   let dragging = $state(false);
   let last = $state(null);
+  // Viewport loop: data effects mark the frame dirty, the rAF loop below
+  // presents it. Pan/zoom streams viewport updates; the loop draws at most
+  // once per frame, so continuous drags never queue blank frames.
+  let dirty = $state(true);
 
   const toScreen = (x, y, w, h) => [
     ((x - viewport.x_min) / (viewport.x_max - viewport.x_min)) * w,
@@ -18,6 +22,7 @@
     canvas.width = Math.max(1, Math.round(rect.width * dpr));
     canvas.height = Math.max(1, Math.round(rect.height * dpr));
     onSize(rect.width, rect.height);
+    dirty = true;
   }
 
   function draw() {
@@ -142,16 +147,42 @@
   $effect(() => {
     if (canvas && !ctx) ctx = canvas.getContext('2d');
     fitCanvas();
-    draw();
+
+    // Canvas event loop: present dirty frames, meter the 60 FPS baseline.
+    // FPS is reported at most once per second to keep parent state calm.
+    let raf = 0;
+    let frames = 0;
+    let windowStart = performance.now();
+    let lastReport = 0;
+    const loop = (now) => {
+      if (dirty) {
+        draw();
+        dirty = false;
+      }
+      frames += 1;
+      const elapsed = now - windowStart;
+      if (elapsed >= 500) {
+        const value = Math.round((frames * 1000) / elapsed);
+        if (now - lastReport >= 1000) {
+          lastReport = now;
+          onFps?.(value);
+        }
+        frames = 0;
+        windowStart = now;
+      }
+      raf = requestAnimationFrame(loop);
+    };
+    raf = requestAnimationFrame(loop);
+    return () => cancelAnimationFrame(raf);
   });
 
   $effect(() => {
-    // redraw on data changes
+    // mark dirty on data changes; the loop presents
     void points;
     void viewport;
     void grid;
     void hover;
-    draw();
+    dirty = true;
   });
 </script>
 

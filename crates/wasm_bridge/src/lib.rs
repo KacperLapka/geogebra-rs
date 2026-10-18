@@ -8,13 +8,14 @@
 //! Exported surface:
 //! `parse_and_validate`, `set_function`, `update_param`, `update_viewport`,
 //! `query_hover` (AD-5) plus tracer helpers `sample_points`,
-//! `serialize_workspace`, `set_canvas_size` (owned by follow-up work).
+//! `serialize_workspace`, `set_canvas_size`, `gpu_status`, `set_gpu_status`
+//! (owned by follow-up work).
 
 use std::collections::HashMap;
 use std::sync::{Mutex, OnceLock};
 
 use core_math::{Expr, Span, parse};
-use render::{Viewport, grid_ticks, sample_curve};
+use render::{GpuStatus, Viewport, grid_ticks, sample_curve};
 use serde::{Deserialize, Serialize};
 use wasm_bindgen::prelude::*;
 
@@ -30,6 +31,11 @@ struct Session {
     /// Slider-bound parameters.
     params: HashMap<String, f64>,
     viewport: Viewport,
+    /// Bumped by every accepted `update_viewport`; the canvas loop skips
+    /// uniform re-upload while this is unchanged.
+    viewport_revision: u64,
+    /// Backend the canvas loop actually draws with (story 1.2 status path).
+    gpu: GpuStatus,
     canvas_w: f64,
     canvas_h: f64,
 }
@@ -41,6 +47,8 @@ impl Default for Session {
             formulas: HashMap::new(),
             params: HashMap::new(),
             viewport: Viewport::default(),
+            viewport_revision: 0,
+            gpu: GpuStatus::CpuFallback,
             canvas_w: 800.0,
             canvas_h: 600.0,
         }
@@ -188,6 +196,9 @@ pub fn update_param(key: &str, value: f64) {
 }
 
 /// Move the visible window. Ignores degenerate ranges.
+///
+/// Accepted updates bump the viewport revision so the canvas loop can skip
+/// redundant uniform uploads; rejected input leaves revision untouched.
 #[wasm_bindgen]
 pub fn update_viewport(x_min: f64, x_max: f64, y_min: f64, y_max: f64) {
     if !(x_min < x_max) || !(y_min < y_max) {
@@ -196,7 +207,9 @@ pub fn update_viewport(x_min: f64, x_max: f64, y_min: f64, y_max: f64) {
     if ![x_min, x_max, y_min, y_max].iter().all(|v| v.is_finite()) {
         return;
     }
-    session().lock().unwrap().viewport = Viewport::new(x_min, x_max, y_min, y_max);
+    let mut s = session().lock().unwrap();
+    s.viewport = Viewport::new(x_min, x_max, y_min, y_max);
+    s.viewport_revision += 1;
 }
 
 /// Tell the bridge the canvas pixel size so hover math is exact.
@@ -258,6 +271,30 @@ pub fn grid_lines() -> String {
     let x = grid_ticks(s.viewport.x_min, s.viewport.x_max, 10);
     let y = grid_ticks(s.viewport.y_min, s.viewport.y_max, 10);
     serde_json::to_string(&serde_json::json!({ "x": x, "y": y })).unwrap()
+}
+
+/// Pipeline status for the Svelte banner and loop backend selection.
+///
+/// Returns `{"status":"webgpu|webgl2|cpu-fallback","viewport_revision":N}`.
+/// Tracer helper owned by story 1.2; the canvas loop polls the revision to
+/// skip redundant uniform uploads.
+#[wasm_bindgen]
+pub fn gpu_status() -> String {
+    let s = session().lock().unwrap();
+    serde_json::to_string(&serde_json::json!({
+        "status": s.gpu.as_str(),
+        "viewport_revision": s.viewport_revision,
+    }))
+    .unwrap()
+}
+
+/// Record which backend the canvas loop actually acquired.
+///
+/// Accepts the [`GpuStatus`] wire names; unknown input falls back to
+/// `cpu-fallback` so the loop can never observe an invalid backend.
+#[wasm_bindgen]
+pub fn set_gpu_status(status: &str) {
+    session().lock().unwrap().gpu = GpuStatus::from_str(status);
 }
 
 /// Workspace snapshot stub owned by this epic for Epic 5 (`version: 1`).
@@ -347,5 +384,30 @@ mod tests {
         let ws: Workspace = parse_json(&serialize_workspace());
         assert_eq!(ws.viewport.x_min, -10.0);
         assert!(!ws.params.contains_key("x"));
+    }
+
+    #[test]
+    fn gpu_status_tracks_backend_and_viewport_revision() {
+        let _guard = test_lock().lock().unwrap();
+        reset_session();
+        let first: serde_json::Value = parse_json(&gpu_status());
+        assert_eq!(first["status"], "cpu-fallback");
+        assert_eq!(first["viewport_revision"], 0);
+
+        update_viewport(-5.0, 5.0, -5.0, 5.0);
+        update_viewport(-4.0, 4.0, -4.0, 4.0);
+        update_viewport(4.0, -4.0, -4.0, 4.0); // rejected: no bump
+        let moved: serde_json::Value = parse_json(&gpu_status());
+        assert_eq!(moved["viewport_revision"], 2);
+
+        set_gpu_status("webgpu");
+        let gpu: serde_json::Value = parse_json(&gpu_status());
+        assert_eq!(gpu["status"], "webgpu");
+        set_gpu_status("webgl2");
+        let gl: serde_json::Value = parse_json(&gpu_status());
+        assert_eq!(gl["status"], "webgl2");
+        set_gpu_status("nonsense");
+        let fallback: serde_json::Value = parse_json(&gpu_status());
+        assert_eq!(fallback["status"], "cpu-fallback");
     }
 }

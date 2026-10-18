@@ -1,7 +1,8 @@
 // Backend contract shared by the Rust bundle wrapper and the JS fallback.
 // Every backend exposes the same synchronous surface:
 //   kind, parseAndValidate, setFunction, updateParam, updateViewport,
-//   setCanvasSize, queryHover, samplePoints, gridLines, serializeWorkspace
+//   setCanvasSize, queryHover, samplePoints, gridLines, serializeWorkspace,
+//   gpuStatus
 
 function asValid(raw) {
   if (raw && Array.isArray(raw.params)) return { ok: true, params: raw.params };
@@ -19,7 +20,8 @@ function wrapRust(pkg) {
     queryHover: (px, py) => JSON.parse(pkg.query_hover(px, py)),
     samplePoints: (n) => JSON.parse(pkg.sample_points(n)),
     gridLines: () => JSON.parse(pkg.grid_lines()),
-    serializeWorkspace: () => JSON.parse(pkg.serialize_workspace())
+    serializeWorkspace: () => JSON.parse(pkg.serialize_workspace()),
+    gpuStatus: () => JSON.parse(pkg.gpu_status())
   };
 }
 

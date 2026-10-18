@@ -15,6 +15,8 @@
   let viewport = $state({ x_min: -10, x_max: 10, y_min: -10, y_max: 10 });
   let hover = $state(null);
   let workspace = $state(null);
+  let gpu = $state({ status: 'cpu-fallback', viewport_revision: 0 });
+  let fps = $state(null);
 
   function refresh() {
     if (!backend) return;
@@ -22,6 +24,7 @@
     points = sample.points;
     grid = backend.gridLines();
     workspace = backend.serializeWorkspace();
+    gpu = backend.gpuStatus();
     const known = {};
     for (const name of sample.params ?? []) known[name] = params[name] ?? 1;
     params = known;
@@ -78,6 +81,7 @@
       {:else}
         Dev fallback math active — run <code>wasm-pack build</code> to link the real Rust bundle.
       {/if}
+      {' '}GPU: {gpu.status}{fps !== null ? ` · ${fps} FPS` : ''} (rev {gpu.viewport_revision}).
     </p>
   {:else}
     <p class="banner fallback">Loading math backend…</p>
@@ -94,6 +98,7 @@
     onHover={handleHover}
     onLeave={() => (hover = null)}
     onSize={(w, h) => backend?.setCanvasSize(w, h)}
+    onFps={(value) => (fps = value)}
   >
     <Tooltip {hover} />
   </Canvas>

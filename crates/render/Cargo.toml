@@ -2,11 +2,16 @@
 name = "render"
 version = "0.1.0"
 edition = "2024"
-description = "Viewport math, curve sampler, grid ticks. GPU pipeline (wgpu) lands in story 1.2; this tracer keeps pure, natively testable logic."
+description = "Viewport math, curve sampler, grid ticks, wgpu pipeline with WebGL2 fallback and viewport render loop (AD-4, R4)."
 license = "MIT"
 
 [dependencies]
 core_math = { path = "../core_math" }
+wgpu = { version = "30.0.1", features = ["webgl"] }
+pollster = "1"
+
+[dev-dependencies]
+naga = { version = "30", features = ["wgsl-in"] }
 
 [lib]
 name = "render"
