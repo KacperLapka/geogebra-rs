@@ -19,3 +19,11 @@ frontend/dist/
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
+
+# ==========================================
+# 3. BMad & Personal Config
+# ==========================================
+*.user.toml
+.*-migration-backup-*
+/pacts/
+pact-logs/
