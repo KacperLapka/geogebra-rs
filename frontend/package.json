@@ -8,7 +8,8 @@
     "sync:pkg": "node scripts/sync-pkg.js",
     "dev": "node scripts/sync-pkg.js && vite",
     "build": "node scripts/sync-pkg.js && vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "test": "node --test tests/"
   },
   "devDependencies": {
     "@sveltejs/vite-plugin-svelte": "^5.1.0",
