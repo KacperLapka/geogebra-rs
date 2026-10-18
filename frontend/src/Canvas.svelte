@@ -1,5 +1,5 @@
 <script>
-  let { points, viewport, grid, hover, onViewport, onHover, onLeave, onSize, onFps, children } = $props();
+  let { points, viewport, grid, hover, style, onViewport, onHover, onLeave, onSize, onFps, children } = $props();
 
   let canvas = $state(null);
   let ctx = $state(null);
@@ -62,22 +62,24 @@
     }
     ctx.stroke();
 
-    // curve (breaks on null y)
-    ctx.strokeStyle = '#2563eb';
-    ctx.lineWidth = 2;
+    // curve (breaks on null y; skipped when the style hides it)
+    ctx.strokeStyle = style?.color ?? '#2563eb';
+    ctx.lineWidth = style?.widthPx ?? 3.5;
     ctx.beginPath();
     let pen = false;
-    for (const [x, y] of points ?? []) {
-      if (y === null || y === undefined || Number.isNaN(y)) {
-        pen = false;
-        continue;
-      }
-      const [px, py] = toScreen(x, y, w, h);
-      if (!pen) {
-        ctx.moveTo(px, py);
-        pen = true;
-      } else {
-        ctx.lineTo(px, py);
+    if (style?.visible !== false) {
+      for (const [x, y] of points ?? []) {
+        if (y === null || y === undefined || Number.isNaN(y)) {
+          pen = false;
+          continue;
+        }
+        const [px, py] = toScreen(x, y, w, h);
+        if (!pen) {
+          ctx.moveTo(px, py);
+          pen = true;
+        } else {
+          ctx.lineTo(px, py);
+        }
       }
     }
     ctx.stroke();
@@ -182,6 +184,7 @@
     void viewport;
     void grid;
     void hover;
+    void style;
     dirty = true;
   });
 </script>

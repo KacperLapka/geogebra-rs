@@ -139,14 +139,47 @@ function collectParams(node, out = []) {
 const POLE = 1e6;
 const guard = (y) => (Number.isFinite(y) && Math.abs(y) <= POLE ? y : null);
 
+// Style parity with render::FunctionStyle (E4-STYLE-STRUCT).
+const MIN_WIDTH_PX = 2.5;
+const MAX_WIDTH_PX = 6.0;
+const DEFAULT_WIDTH_PX = 3.5;
+const TRACER_HEX = '#2563eb';
+
+const srgbToLinear = (c) => (c <= 0.04045 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4));
+
+function hexToLinear(hex) {
+  const h = typeof hex === 'string' && hex.startsWith('#') ? hex.slice(1) : hex;
+  if (typeof h !== 'string' || h.length !== 6 || !/^[0-9a-fA-F]{6}$/.test(h)) return null;
+  const r = parseInt(h.slice(0, 2), 16) / 255;
+  const g = parseInt(h.slice(2, 4), 16) / 255;
+  const b = parseInt(h.slice(4, 6), 16) / 255;
+  return [srgbToLinear(r), srgbToLinear(g), srgbToLinear(b), 1];
+}
+
+const clampWidth = (w) => (Number.isFinite(w) ? Math.min(MAX_WIDTH_PX, Math.max(MIN_WIDTH_PX, w)) : DEFAULT_WIDTH_PX);
+const isIdent = (s) => typeof s === 'string' && /^[A-Za-z_][A-Za-z0-9_]*$/.test(s);
+
 export function createFallback() {
   const state = {
     functions: new Map(),
     params: new Map(),
+    styles: new Map(),
     viewport: { x_min: -10, x_max: 10, y_min: -10, y_max: 10 },
     viewport_revision: 0,
     gpu: 'cpu-fallback',
     canvas: { w: 800, h: 600 }
+  };
+
+  const defaultStyle = () => ({
+    color: hexToLinear(TRACER_HEX),
+    width_px: DEFAULT_WIDTH_PX,
+    dashed: false,
+    visible: true
+  });
+
+  const styleFor = (id) => {
+    if (!state.styles.has(id)) state.styles.set(id, defaultStyle());
+    return state.styles.get(id);
   };
 
   function validate(formula) {
@@ -175,7 +208,24 @@ export function createFallback() {
       if (!r.ok) return { ok: false, span: r.span, message: r.message };
       for (const p of r.params) if (!state.params.has(p)) state.params.set(p, 1);
       state.functions.set(id, { node: r.node, text: formula });
+      styleFor(id);
       return { ok: true, params: r.params };
+    },
+    setFunctionStyle(id, colorHex, widthPx, dashed) {
+      if (!isIdent(id)) return { ...defaultStyle() };
+      const rgb = hexToLinear(colorHex);
+      if (!rgb) return state.styles.has(id) ? { ...state.styles.get(id) } : { ...defaultStyle() };
+      const entry = styleFor(id);
+      entry.color = rgb;
+      entry.width_px = clampWidth(widthPx);
+      entry.dashed = !!dashed;
+      return { ...entry };
+    },
+    setFunctionVisibility(id, visible) {
+      if (!isIdent(id)) return { ...defaultStyle() };
+      const entry = styleFor(id);
+      entry.visible = !!visible;
+      return { ...entry };
     },
     updateParam(key, value) {
       if (key === 'x' || !/^[A-Za-z_][A-Za-z0-9_]*$/.test(key) || !Number.isFinite(value)) return;

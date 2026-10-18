@@ -7,9 +7,57 @@
 use std::collections::HashMap;
 
 use crate::ast::Expr;
+use crate::diff::differentiate;
 
 /// Magnitude above which a sample counts as diverging toward a pole.
 pub const POLE_THRESHOLD: f64 = 1e6;
+
+/// Marker category for calculus overlays (tracer stub for render integration).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MarkerKind {
+    Root,
+    LocalMin,
+    LocalMax,
+    Inflection,
+}
+
+/// Coordinate marker emitted by the solver pipeline (stub shape).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Marker {
+    pub kind: MarkerKind,
+    pub x: f64,
+    pub y: f64,
+}
+
+impl Marker {
+    pub fn new(kind: MarkerKind, x: f64, y: f64) -> Self {
+        Self { kind, x, y }
+    }
+}
+
+/// Tangent coefficients `(y0, slope)` at `x0`: `y0 = f(x0)`, `slope = f'(x0)`.
+pub fn tangent_coeffs(
+    expr: &Expr,
+    params: &HashMap<String, f64>,
+    x0: f64,
+) -> (f64, f64) {
+    let slope = differentiate(expr, "x").eval(x0, params);
+    let y0 = expr.eval(x0, params);
+    (y0, slope)
+}
+
+/// Evaluate the tangent line to `expr` at `x0`, sampled at `x`.
+///
+/// `tangent_at = f(x0) + f'(x0) * (x - x0)`.
+pub fn tangent_at(
+    expr: &Expr,
+    params: &HashMap<String, f64>,
+    x0: f64,
+    x: f64,
+) -> f64 {
+    let (y0, slope) = tangent_coeffs(expr, params, x0);
+    y0 + slope * (x - x0)
+}
 
 /// Refine a bracketed root with Brent's method.
 ///
@@ -166,5 +214,50 @@ mod tests {
         let params = HashMap::new();
         let brackets = scan_sign_changes(&expr, &params, -1.0, 1.0, 4);
         assert!(brackets.is_empty());
+    }
+
+    #[test]
+    fn tracer_bullet_polynomial_derivatives_simplify_and_tangent() {
+        // f(x) = x^3 + 2x → f' = 3x^2 + 2, f'' = 6x (entry 2.1).
+        let f = parse("x^3+2*x").unwrap();
+        let params = HashMap::new();
+        let fp = differentiate(&f, "x");
+        let fpp = differentiate(&fp, "x");
+        for i in -8..=8 {
+            let x = i as f64 * 0.5;
+            let want_p = 3.0 * x * x + 2.0;
+            let want_pp = 6.0 * x;
+            assert!(
+                (fp.eval(x, &params) - want_p).abs() < 1e-12,
+                "f' x={x}: got {} want {want_p}",
+                fp.eval(x, &params)
+            );
+            assert!(
+                (fpp.eval(x, &params) - want_pp).abs() < 1e-12,
+                "f'' x={x}: got {} want {want_pp}",
+                fpp.eval(x, &params)
+            );
+        }
+        // Tangent at x0: T(x) = f(x0) + f'(x0)*(x - x0).
+        for x0 in [-2.0f64, 0.0, 1.5] {
+            let y0 = x0.powi(3) + 2.0 * x0;
+            let slope = 3.0 * x0 * x0 + 2.0;
+            for dx in [-1.0, -0.25, 0.0, 0.5, 2.0] {
+                let x = x0 + dx;
+                let want = y0 + slope * dx;
+                let got = tangent_at(&f, &params, x0, x);
+                assert!(
+                    (got - want).abs() < 1e-12,
+                    "tangent x0={x0} x={x}: got {got} want {want}"
+                );
+            }
+            let (got_y0, got_slope) = tangent_coeffs(&f, &params, x0);
+            assert!((got_y0 - y0).abs() < 1e-12, "y0 at {x0}");
+            assert!((got_slope - slope).abs() < 1e-12, "slope at {x0}");
+        }
+        // Marker stub shape carries coordinates for future render wiring.
+        let m = Marker::new(MarkerKind::Root, 1.0, 3.0);
+        assert_eq!(m.x, 1.0);
+        assert_eq!(m.y, 3.0);
     }
 }

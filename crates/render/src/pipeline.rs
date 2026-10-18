@@ -126,16 +126,47 @@ pub const CURVE_SHADER: &str = include_str!("../shaders/curve.wgsl");
 /// Grid-line shader sharing the viewport uniform layout.
 pub const GRID_SHADER: &str = include_str!("../shaders/grid.wgsl");
 
-/// Vertex layout for sampled curve points: one `vec2<f32>` math point.
+/// Vertex layout for the ribbon contract: `position_math: vec2f` (loc 0),
+/// `normal_dir: vec2f` (loc 1), `color: vec4f` (loc 2), `width_px: f32`
+/// (loc 3), `dash_flag: f32` (loc 4), `arclength_px: f32` (loc 5).
+/// 11 floats, 44-byte stride; matches [`crate::curve::CurveVertex`].
 pub fn curve_vertex_layout() -> wgpu::VertexBufferLayout<'static> {
+    use std::mem::size_of;
     wgpu::VertexBufferLayout {
-        array_stride: mem::size_of::<[f32; 2]>() as wgpu::BufferAddress,
+        array_stride: mem::size_of::<crate::curve::CurveVertex>() as wgpu::BufferAddress,
         step_mode: wgpu::VertexStepMode::Vertex,
-        attributes: &[wgpu::VertexAttribute {
-            format: wgpu::VertexFormat::Float32x2,
-            offset: 0,
-            shader_location: 0,
-        }],
+        attributes: &[
+            wgpu::VertexAttribute {
+                format: wgpu::VertexFormat::Float32x2,
+                offset: 0,
+                shader_location: 0,
+            },
+            wgpu::VertexAttribute {
+                format: wgpu::VertexFormat::Float32x2,
+                offset: size_of::<[f32; 2]>() as wgpu::BufferAddress,
+                shader_location: 1,
+            },
+            wgpu::VertexAttribute {
+                format: wgpu::VertexFormat::Float32x4,
+                offset: size_of::<[f32; 4]>() as wgpu::BufferAddress,
+                shader_location: 2,
+            },
+            wgpu::VertexAttribute {
+                format: wgpu::VertexFormat::Float32,
+                offset: size_of::<[f32; 8]>() as wgpu::BufferAddress,
+                shader_location: 3,
+            },
+            wgpu::VertexAttribute {
+                format: wgpu::VertexFormat::Float32,
+                offset: size_of::<[f32; 9]>() as wgpu::BufferAddress,
+                shader_location: 4,
+            },
+            wgpu::VertexAttribute {
+                format: wgpu::VertexFormat::Float32,
+                offset: size_of::<[f32; 10]>() as wgpu::BufferAddress,
+                shader_location: 5,
+            },
+        ],
     }
 }
 
@@ -443,16 +474,49 @@ mod tests {
 
     #[test]
     fn vertex_layout_matches_shader_input() {
+        use crate::curve::CURVE_VERTEX_STRIDE;
         let layout = curve_vertex_layout();
-        assert_eq!(layout.array_stride, 8);
-        assert_eq!(layout.attributes.len(), 1);
-        assert_eq!(layout.attributes[0].format, wgpu::VertexFormat::Float32x2);
+        assert_eq!(
+            layout.array_stride,
+            CURVE_VERTEX_STRIDE as wgpu::BufferAddress
+        );
+        assert_eq!(layout.array_stride, 44);
+        assert_eq!(layout.attributes.len(), 6);
+        let expect = [
+            (wgpu::VertexFormat::Float32x2, 0u64, 0u32),
+            (wgpu::VertexFormat::Float32x2, 8u64, 1u32),
+            (wgpu::VertexFormat::Float32x4, 16u64, 2u32),
+            (wgpu::VertexFormat::Float32, 32u64, 3u32),
+            (wgpu::VertexFormat::Float32, 36u64, 4u32),
+            (wgpu::VertexFormat::Float32, 40u64, 5u32),
+        ];
+        for (attr, (format, offset, location)) in layout.attributes.iter().zip(expect.iter()) {
+            assert_eq!(attr.format, *format);
+            assert_eq!(attr.offset, *offset);
+            assert_eq!(attr.shader_location, *location);
+        }
     }
 
     #[test]
     fn shaders_parse_as_wgsl() {
         let curve = naga::front::wgsl::parse_str(CURVE_SHADER);
         assert!(curve.is_ok(), "curve.wgsl: {curve:?}");
+        let module = curve.unwrap();
+        // Contract: six vertex inputs at locations 0..=5.
+        let mut locations = Vec::new();
+        for ep in module
+            .entry_points
+            .iter()
+            .filter(|e| e.function.name.as_deref() == Some("vs_main"))
+        {
+            for arg in ep.function.arguments.iter() {
+                if let Some(naga::Binding::Location { location, .. }) = arg.binding {
+                    locations.push(location);
+                }
+            }
+        }
+        locations.sort_unstable();
+        assert_eq!(locations, vec![0, 1, 2, 3, 4, 5]);
         let grid = naga::front::wgsl::parse_str(GRID_SHADER);
         assert!(grid.is_ok(), "grid.wgsl: {grid:?}");
     }

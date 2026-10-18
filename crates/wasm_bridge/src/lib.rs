@@ -6,7 +6,8 @@
 //! Svelte after `wasm-pack build`.
 //!
 //! Exported surface:
-//! `parse_and_validate`, `set_function`, `update_param`, `update_viewport`,
+//! `parse_and_validate`, `set_function`, `set_function_style`,
+//! `set_function_visibility`, `update_param`, `update_viewport`,
 //! `query_hover` (AD-5) plus `serialize_workspace` (workspace JSON owned
 //! shape for Epic 5) and tracer helpers `sample_points`,
 //! `set_canvas_size`, `gpu_status`, `set_gpu_status`.
@@ -15,7 +16,10 @@ use std::collections::HashMap;
 use std::sync::{Mutex, OnceLock};
 
 use core_math::{Expr, Span, parse};
-use render::{GpuStatus, POLE_BREAK, Viewport, grid_ticks, sample_curve};
+use render::{
+    FunctionStyle, GpuStatus, POLE_BREAK, Viewport, clamp_width, default_style, for_function_index,
+    grid_ticks, hex_to_linear, sample_curve,
+};
 use serde::{Deserialize, Serialize};
 use wasm_bindgen::prelude::*;
 
@@ -28,6 +32,9 @@ struct Session {
     functions: HashMap<String, Expr>,
     /// Function id -> last accepted formula text (for workspace JSON).
     formulas: HashMap<String, String>,
+    /// Function id -> render-owned style (E4-STYLE-STRUCT). Auto-created on
+    /// `set_function`; `visible=false` skips submission, never deletes.
+    styles: HashMap<String, FunctionStyle>,
     /// Slider-bound parameters.
     params: HashMap<String, f64>,
     viewport: Viewport,
@@ -45,6 +52,7 @@ impl Default for Session {
         Self {
             functions: HashMap::new(),
             formulas: HashMap::new(),
+            styles: HashMap::new(),
             params: HashMap::new(),
             viewport: Viewport::default(),
             viewport_revision: 0,
@@ -160,7 +168,104 @@ fn set_function_core(id: &str, formula: &str) -> Result<ParseOk, ParseErr> {
     }
     s.formulas.insert(id.to_string(), formula.to_string());
     s.functions.insert(id.to_string(), expr);
+    // Auto-default the render-owned style so the curve draws immediately.
+    s.styles
+        .entry(id.to_string())
+        .or_insert_with(|| default_style_for(id));
     Ok(ok)
+}
+
+/// Default style per id: the tracer curve `"f"` takes palette index 0.
+fn default_style_for(id: &str) -> FunctionStyle {
+    if id == "f" {
+        for_function_index(0)
+    } else {
+        default_style()
+    }
+}
+
+/// JSON wire shape for a stored style. Always returned by the style setters
+/// so the frontend can sync clamped widths without a second round-trip.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct StyleDto {
+    pub color: [f32; 4],
+    pub width_px: f32,
+    pub dashed: bool,
+    pub visible: bool,
+}
+
+impl From<&FunctionStyle> for StyleDto {
+    fn from(s: &FunctionStyle) -> Self {
+        Self {
+            color: s.color,
+            width_px: s.width_px,
+            dashed: s.dashed,
+            visible: s.visible,
+        }
+    }
+}
+
+fn style_dto(s: &FunctionStyle) -> String {
+    serde_json::to_string(&StyleDto::from(s)).unwrap()
+}
+
+/// Style update core: hex validation + width clamp. Bad hex or bad id keeps
+/// the stored style untouched. Visibility is always preserved here.
+fn set_function_style_core(
+    id: &str,
+    color_hex: &str,
+    width_px: f64,
+    dashed: bool,
+) -> FunctionStyle {
+    if !is_ident(id) {
+        return default_style_for(id);
+    }
+    let Some(rgb) = hex_to_linear(color_hex) else {
+        let s = session().lock().unwrap();
+        return s
+            .styles
+            .get(id)
+            .copied()
+            .unwrap_or_else(|| default_style_for(id));
+    };
+    let mut s = session().lock().unwrap();
+    let entry = s
+        .styles
+        .entry(id.to_string())
+        .or_insert_with(|| default_style_for(id));
+    entry.color = rgb;
+    entry.width_px = clamp_width(width_px as f32);
+    entry.dashed = dashed;
+    *entry
+}
+
+/// Visibility core: retains the entry, flips only the flag.
+fn set_function_visibility_core(id: &str, visible: bool) -> FunctionStyle {
+    if !is_ident(id) {
+        return default_style_for(id);
+    }
+    let mut s = session().lock().unwrap();
+    let entry = s
+        .styles
+        .entry(id.to_string())
+        .or_insert_with(|| default_style_for(id));
+    entry.visible = visible;
+    *entry
+}
+
+/// Visible flag of the active function's style; a missing entry counts as
+/// visible so curves drawn before any style call keep rendering.
+fn active_visible(s: &Session) -> bool {
+    let id = if s.functions.contains_key("f") {
+        Some("f")
+    } else if s.functions.len() == 1 {
+        s.functions.keys().next().map(String::as_str)
+    } else {
+        None
+    };
+    id.and_then(|id| s.styles.get(id))
+        .map(|st| st.visible)
+        .unwrap_or(true)
 }
 
 /// Active expression for sampling/hover: id `"f"`, else any single function.
@@ -195,6 +300,26 @@ pub fn set_function(id: &str, formula: &str) -> String {
         Ok(ok) => serde_json::to_string(&ok).unwrap(),
         Err(e) => serde_json::to_string(&e).unwrap(),
     }
+}
+
+/// Install or restyle a curve: `set_function_style("f", "#2563eb", 3.5, false)`.
+///
+/// Width clamps to [2.5, 6.0]; malformed hex keeps the stored style.
+/// Always returns the stored style JSON
+/// `{"color":[r,g,b,a],"width_px":w,"dashed":b,"visible":b}`.
+#[wasm_bindgen]
+pub fn set_function_style(id: &str, color_hex: &str, width_px: f64, dashed: bool) -> String {
+    style_dto(&set_function_style_core(id, color_hex, width_px, dashed))
+}
+
+/// Show or hide a curve: `set_function_visibility("f", false)`.
+///
+/// The style entry is retained so toggling back restores the ribbon without
+/// re-entering the formula. Returns the stored style JSON (see
+/// [`set_function_style`]).
+#[wasm_bindgen]
+pub fn set_function_visibility(id: &str, visible: bool) -> String {
+    style_dto(&set_function_visibility_core(id, visible))
 }
 
 /// Bind a slider value: `update_param("a", 2.5)`.
@@ -314,14 +439,14 @@ pub fn query_hover(px_x: f64, px_y: f64) -> String {
 pub fn sample_points(n: usize) -> String {
     let s = session().lock().unwrap();
     let points: Vec<(f64, Option<f64>)> = match active_expr(&s) {
-        Some(expr) => {
+        Some(expr) if active_visible(&s) => {
             let n = n.clamp(2, 4000);
             sample_curve(&expr, &s.params, &s.viewport, n)
                 .into_iter()
                 .map(|[x, y]| (x, if y.is_nan() { None } else { Some(y) }))
                 .collect()
         }
-        None => Vec::new(),
+        Some(_) | None => Vec::new(),
     };
     let params: Vec<String> = s.params.keys().cloned().collect();
     serde_json::to_string(&serde_json::json!({ "points": points, "params": params })).unwrap()
@@ -383,8 +508,8 @@ pub fn serialize_workspace() -> String {
 
 fn is_ident(s: &str) -> bool {
     !s.is_empty()
-        && s.chars().all(|c| c.is_alphanumeric() || c == '_')
-        && !s.chars().next().unwrap().is_numeric()
+        && s.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+        && !s.chars().next().unwrap().is_ascii_digit()
 }
 
 #[cfg(test)]
@@ -582,6 +707,79 @@ mod tests {
     }
 
     #[test]
+    fn style_auto_default_on_set_function() {
+        let _guard = test_lock().lock().unwrap();
+        reset_session();
+        let _: ParseOk = parse_json(&set_function("f", "x^2"));
+        let style: StyleDto = parse_json(&set_function_visibility("f", true));
+        assert!(style.visible);
+        assert!((style.width_px - 3.5).abs() < 1e-6);
+        assert!(!style.dashed);
+        let expect = render::hex_to_linear("#2563eb").unwrap();
+        for (a, b) in style.color.iter().zip(expect.iter()) {
+            assert!((a - b).abs() < 1e-6);
+        }
+    }
+
+    #[test]
+    fn style_width_clamps_both_ends() {
+        let _guard = test_lock().lock().unwrap();
+        reset_session();
+        let _: ParseOk = parse_json(&set_function("f", "x^2"));
+        let narrow: StyleDto = parse_json(&set_function_style("f", "#2563eb", 1.0, false));
+        assert!((narrow.width_px - 2.5).abs() < 1e-6);
+        let wide: StyleDto = parse_json(&set_function_style("f", "#2563eb", 10.0, false));
+        assert!((wide.width_px - 6.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn style_bad_hex_keeps_previous() {
+        let _guard = test_lock().lock().unwrap();
+        reset_session();
+        let _: ParseOk = parse_json(&set_function("f", "x^2"));
+        let before: StyleDto = parse_json(&set_function_style("f", "#2563eb", 3.5, false));
+        let after: StyleDto = parse_json(&set_function_style("f", "not-a-color", 3.5, false));
+        assert_eq!(before, after);
+    }
+
+    #[test]
+    fn visibility_retains_entry_and_restores() {
+        let _guard = test_lock().lock().unwrap();
+        reset_session();
+        let _: ParseOk = parse_json(&set_function("f", "x^2"));
+        let _: StyleDto = parse_json(&set_function_style("f", "#2563eb", 4.0, false));
+        let hidden: StyleDto = parse_json(&set_function_visibility("f", false));
+        assert!(!hidden.visible);
+        assert!((hidden.width_px - 4.0).abs() < 1e-6);
+        // Style entry retained while hidden: width and colour survive.
+        let restored: StyleDto = parse_json(&set_function_visibility("f", true));
+        assert!(restored.visible);
+        assert!((restored.width_px - 4.0).abs() < 1e-6);
+        assert_eq!(restored.color, hidden.color);
+    }
+
+    #[test]
+    fn hidden_curve_samples_no_points() {
+        let _guard = test_lock().lock().unwrap();
+        reset_session();
+        let _: ParseOk = parse_json(&set_function("f", "x^2"));
+        let full: serde_json::Value = parse_json(&sample_points(16));
+        assert!(!full["points"].as_array().unwrap().is_empty());
+        let _: StyleDto = parse_json(&set_function_visibility("f", false));
+        let empty: serde_json::Value = parse_json(&sample_points(16));
+        assert!(empty["points"].as_array().unwrap().is_empty());
+    }
+
+    #[test]
+    fn visibility_without_prior_function_defaults() {
+        let _guard = test_lock().lock().unwrap();
+        reset_session();
+        let style: StyleDto = parse_json(&set_function_visibility("g", false));
+        assert!(!style.visible);
+        assert!((style.width_px - 3.5).abs() < 1e-6);
+    }
+
+    #[test]
     fn workspace_round_trip_restores_identical_session() {
         let _guard = test_lock().lock().unwrap();
         reset_session();
@@ -598,6 +796,39 @@ mod tests {
         }
         for (k, v) in &ws.params {
             update_param(k, *v);
+        }
+        update_viewport(
+            ws.viewport.x_min,
+            ws.viewport.x_max,
+            ws.viewport.y_min,
+            ws.viewport.y_max,
+        );
+        let again: Workspace = parse_json(&serialize_workspace());
+        assert_eq!(ws, again);
+    }
+
+    #[test]
+    fn two_function_session_under_10kb_round_trips() {
+        let _guard = test_lock().lock().unwrap();
+        reset_session();
+        let _: ParseOk = parse_json(&set_function("f", "a*x^2"));
+        let _: ParseOk = parse_json(&set_function("g", "b*sin(x)"));
+        update_param("a", 2.0);
+        update_param("b", 0.5);
+        update_viewport(-10.0, 10.0, -10.0, 10.0);
+        let raw = serialize_workspace();
+        assert!(raw.len() < MAX_WORKSPACE_JSON_BYTES, "len={}", raw.len());
+        let v: serde_json::Value = parse_json(&raw);
+        assert_eq!(v["version"], 1);
+        assert_eq!(v["functions"]["f"], "a*x^2");
+        assert_eq!(v["functions"]["g"], "b*sin(x)");
+        let ws: Workspace = parse_json(&raw);
+        reset_session();
+        for (id, formula) in &ws.functions {
+            let _: ParseOk = parse_json(&set_function(id, formula));
+        }
+        for (k, val) in &ws.params {
+            update_param(k, *val);
         }
         update_viewport(
             ws.viewport.x_min,

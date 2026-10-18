@@ -1,6 +1,7 @@
 // Backend contract shared by the Rust bundle wrapper and the JS fallback.
 // Every backend exposes the same synchronous surface:
-//   kind, parseAndValidate, setFunction, updateParam, updateViewport,
+//   kind, parseAndValidate, setFunction, setFunctionStyle,
+//   setFunctionVisibility, updateParam, updateViewport,
 //   setCanvasSize, queryHover, samplePoints, gridLines, serializeWorkspace,
 //   gpuStatus
 
@@ -14,6 +15,9 @@ function wrapRust(pkg) {
     kind: 'rust',
     parseAndValidate: (formula) => asValid(JSON.parse(pkg.parse_and_validate(formula))),
     setFunction: (id, formula) => asValid(JSON.parse(pkg.set_function(id, formula))),
+    setFunctionStyle: (id, colorHex, widthPx, dashed) =>
+      JSON.parse(pkg.set_function_style(id, colorHex, widthPx, !!dashed)),
+    setFunctionVisibility: (id, visible) => JSON.parse(pkg.set_function_visibility(id, !!visible)),
     updateParam: (key, value) => pkg.update_param(key, value),
     updateViewport: (x0, x1, y0, y1) => pkg.update_viewport(x0, x1, y0, y1),
     setCanvasSize: (w, h) => pkg.set_canvas_size(w, h),
@@ -34,8 +38,14 @@ export async function getBackend() {
     const url = new URL(`${import.meta.env.BASE_URL}pkg/wasm_bridge.js`, window.location.href).href;
     const pkg = await import(/* @vite-ignore */ url);
     if (pkg.default) await pkg.default();
-    // sanity: the glue must export the tracer ABI
-    if (typeof pkg.parse_and_validate !== 'function') throw new Error('abi mismatch');
+    // sanity: the glue must export the tracer ABI including the style fns,
+    // so a stale bundle predating them falls back instead of failing late
+    if (
+      typeof pkg.parse_and_validate !== 'function' ||
+      typeof pkg.set_function_style !== 'function' ||
+      typeof pkg.set_function_visibility !== 'function'
+    )
+      throw new Error('abi mismatch');
     cached = wrapRust(pkg);
   } catch {
     const fallback = await import('./fallback.js');

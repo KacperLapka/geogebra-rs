@@ -24,6 +24,200 @@ pub const MAX_DEPTH: u8 = 8;
 /// Magnitude above which a sample is treated as a pole break, not a point.
 pub const POLE_BREAK: f64 = 1e6;
 
+/// Minimum ribbon width in px (ABI + shader clamp floor).
+pub const MIN_WIDTH_PX: f32 = 2.5;
+
+/// Maximum ribbon width in px (ABI + shader clamp ceiling).
+pub const MAX_WIDTH_PX: f32 = 6.0;
+
+/// Default ribbon width in px for the tracer curve.
+pub const DEFAULT_WIDTH_PX: f32 = 3.5;
+
+/// Tracer-blue sRGB hex kept identical between the 2D fallback and GPU path.
+pub const TRACER_HEX: &str = "#2563eb";
+
+/// Per-function style owned by `render` (E4-STYLE-STRUCT).
+///
+/// Carried through the sample pipe as data, never a side channel.
+/// `visible=false` skips submission but retains the stored entry.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct FunctionStyle {
+    /// Linear-sRGB RGBA, premultiplied-alpha off.
+    pub color: [f32; 4],
+    /// Ribbon width in px, clamped to `[MIN_WIDTH_PX, MAX_WIDTH_PX]`.
+    pub width_px: f32,
+    /// False for `f(x)`; stored for derivatives (dashed rendering lands in 4.2).
+    pub dashed: bool,
+    /// False skips buffer submission for that id, keeping the stored style.
+    pub visible: bool,
+}
+
+/// Default style: tracer blue at 3.5px, solid, visible.
+pub fn default_style() -> FunctionStyle {
+    FunctionStyle {
+        color: hex_to_linear(TRACER_HEX).unwrap_or([0.0, 0.0, 0.0, 1.0]),
+        width_px: DEFAULT_WIDTH_PX,
+        dashed: false,
+        visible: true,
+    }
+}
+
+/// Style for the Nth function. Index 0 is the tracer curve in tracer blue;
+/// further indices reuse the default until the 8-colour cycle lands in 4.3.
+pub fn for_function_index(index: usize) -> FunctionStyle {
+    let _ = index;
+    default_style()
+}
+
+/// Clamp a width into `[MIN_WIDTH_PX, MAX_WIDTH_PX]`; non-finite falls back
+/// to [`DEFAULT_WIDTH_PX`].
+pub fn clamp_width(w: f32) -> f32 {
+    if !w.is_finite() {
+        return DEFAULT_WIDTH_PX;
+    }
+    w.clamp(MIN_WIDTH_PX, MAX_WIDTH_PX)
+}
+
+fn srgb_to_linear(c: f32) -> f32 {
+    if c <= 0.04045 {
+        c / 12.92
+    } else {
+        ((c + 0.055) / 1.055).powf(2.4)
+    }
+}
+
+/// Parse `#RRGGBB` into linear-sRGB RGBA. Returns `None` on any malformed
+/// input so the caller can reject it and keep the previous colour.
+pub fn hex_to_linear(hex: &str) -> Option<[f32; 4]> {
+    let h = hex.strip_prefix('#').unwrap_or(hex);
+    if h.len() != 6 || !h.bytes().all(|b| b.is_ascii_hexdigit()) {
+        return None;
+    }
+    let r = u8::from_str_radix(&h[0..2], 16).ok()? as f32 / 255.0;
+    let g = u8::from_str_radix(&h[2..4], 16).ok()? as f32 / 255.0;
+    let b = u8::from_str_radix(&h[4..6], 16).ok()? as f32 / 255.0;
+    Some([srgb_to_linear(r), srgb_to_linear(g), srgb_to_linear(b), 1.0])
+}
+
+/// One GPU ribbon vertex matching the E4-SHADER-CONTRACT layout:
+/// `position_math: vec2f, normal_dir: vec2f, color: vec4f, width_px: f32,
+/// dash_flag: f32, arclength_px: f32` (11 floats, 44-byte stride).
+#[derive(Debug, Clone, Copy, PartialEq)]
+#[repr(C)]
+pub struct CurveVertex {
+    pub position_math: [f32; 2],
+    pub normal_dir: [f32; 2],
+    pub color: [f32; 4],
+    pub width_px: f32,
+    pub dash_flag: f32,
+    pub arclength_px: f32,
+}
+
+/// Stride of [`CurveVertex`] in bytes; must match `curve_vertex_layout`.
+pub const CURVE_VERTEX_STRIDE: usize = 44;
+
+/// Expand sampled math points into a GPU ribbon (two verts per valid point).
+///
+/// Both verts share the sample position with opposite unit normals; the
+/// vertex shader offsets by `normal * width / 2` in screen space. NaN or
+/// non-finite samples (pole breaks) emit nothing and reset the arclength
+/// accumulator, so no quad ever joins across a discontinuity. Hidden styles
+/// (`visible=false`) expand to nothing so no sampler or ribbon work is spent
+/// on a curve the frame will skip. Solid path
+/// only: `dash_flag` is `0.0` (the dashed branch lands in 4.2).
+pub fn expand_ribbon(
+    points: &[[f64; 2]],
+    style: &FunctionStyle,
+    viewport: &Viewport,
+    canvas_w: f32,
+    canvas_h: f32,
+) -> Vec<CurveVertex> {
+    if !style.visible {
+        return Vec::new();
+    }
+    let width = clamp_width(style.width_px);
+    let w = viewport.width();
+    let h = viewport.height();
+    let sx = if w.is_finite() && w > 0.0 && canvas_w.is_finite() && canvas_w > 0.0 {
+        canvas_w as f64 / w
+    } else {
+        1.0
+    };
+    let sy = if h.is_finite() && h > 0.0 && canvas_h.is_finite() && canvas_h > 0.0 {
+        canvas_h as f64 / h
+    } else {
+        1.0
+    };
+    // Unit normals need valid neighbours; collect validity once.
+    let valid_at: Vec<bool> = points
+        .iter()
+        .map(|[x, y]| x.is_finite() && y.is_finite())
+        .collect();
+    let mut out: Vec<CurveVertex> = Vec::new();
+    let mut arc: f32 = 0.0;
+    let mut prev_valid: Option<[f64; 2]> = None;
+    for (i, &[x, y]) in points.iter().enumerate() {
+        if !valid_at[i] {
+            prev_valid = None;
+            arc = 0.0;
+            continue;
+        }
+        // Direction from neighbours in screen px for a stable normal.
+        let a = prev_valid.or_else(|| {
+            points[i + 1..]
+                .iter()
+                .find(|p| p[0].is_finite() && p[1].is_finite())
+                .copied()
+        });
+        let b = points[i + 1..]
+            .iter()
+            .find(|p| p[0].is_finite() && p[1].is_finite())
+            .copied()
+            .or(prev_valid);
+        let (dx, dy) = match (a, b) {
+            (Some(a), Some(b)) if a != [x, y] || b != [x, y] => {
+                ((b[0] - a[0]) * sx, (b[1] - a[1]) * sy)
+            }
+            _ => (1.0, 0.0),
+        };
+        let len = (dx * dx + dy * dy).sqrt();
+        let (nx, ny) = if len.is_finite() && len > 0.0 {
+            (-dy / len, dx / len)
+        } else {
+            (0.0, 1.0)
+        };
+        if let Some(p) = prev_valid {
+            let dpx = (x - p[0]) * sx;
+            let dpy = (y - p[1]) * sy;
+            let d = (dpx * dpx + dpy * dpy).sqrt();
+            if d.is_finite() {
+                arc += d as f32;
+            }
+        } else {
+            arc = 0.0;
+        }
+        prev_valid = Some([x, y]);
+        let pos = [x as f32, y as f32];
+        out.push(CurveVertex {
+            position_math: pos,
+            normal_dir: [nx as f32, ny as f32],
+            color: style.color,
+            width_px: width,
+            dash_flag: 0.0,
+            arclength_px: arc,
+        });
+        out.push(CurveVertex {
+            position_math: pos,
+            normal_dir: [-(nx as f32), -(ny as f32)],
+            color: style.color,
+            width_px: width,
+            dash_flag: 0.0,
+            arclength_px: arc,
+        });
+    }
+    out
+}
+
 /// Sample `expr` across the viewport with adaptive sub-pixel refinement.
 ///
 /// `n` is the point budget (clamped to at least 2, at most [`MAX_POINTS`]).
@@ -269,5 +463,74 @@ mod tests {
         let pts = sample_curve(&expr, &HashMap::new(), &vp, 64);
         assert_eq!(verts.len(), pts.len());
         assert!(((verts[0][0] as f64) - pts[0][0]).abs() < 1e-5);
+    }
+
+    #[test]
+    fn default_style_is_tracer_blue_at_3_5px() {
+        let s = default_style();
+        assert_eq!(s.width_px, 3.5);
+        assert!(!s.dashed && s.visible);
+        let expect = hex_to_linear("#2563eb").unwrap();
+        for (a, b) in s.color.iter().zip(expect.iter()) {
+            assert!((a - b).abs() < 1e-6);
+        }
+        assert_eq!(for_function_index(0), s);
+    }
+
+    #[test]
+    fn width_clamps_to_contract_range() {
+        assert_eq!(clamp_width(1.0), MIN_WIDTH_PX);
+        assert_eq!(clamp_width(10.0), MAX_WIDTH_PX);
+        assert_eq!(clamp_width(3.5), 3.5);
+        assert_eq!(clamp_width(f32::NAN), DEFAULT_WIDTH_PX);
+        assert_eq!(clamp_width(f32::INFINITY), DEFAULT_WIDTH_PX);
+    }
+
+    #[test]
+    fn bad_hex_rejected() {
+        assert!(hex_to_linear("not-a-color").is_none());
+        assert!(hex_to_linear("#zzz").is_none());
+        assert!(hex_to_linear("#2563e").is_none());
+        assert!(hex_to_linear("").is_none());
+        let c = hex_to_linear("#2563eb").unwrap();
+        assert_eq!(c[3], 1.0);
+        assert!(c[0] < 0.1 && c[2] > 0.7);
+    }
+
+    #[test]
+    fn ribbon_preserves_nan_breaks() {
+        let expr = parse("1/x").unwrap();
+        let vp = Viewport::new(-1.0, 1.0, -10.0, 10.0);
+        let pts = sample_curve(&expr, &HashMap::new(), &vp, 257);
+        assert!(pts.iter().any(|p| p[1].is_nan()));
+        let style = default_style();
+        let verts = expand_ribbon(&pts, &style, &vp, 800.0, 600.0);
+        let valid = pts.iter().filter(|p| p[1].is_finite()).count();
+        // Two verts per valid sample, none emitted for NaN breaks.
+        assert_eq!(verts.len(), 2 * valid);
+        assert!(verts.iter().all(|v| v.dash_flag == 0.0));
+        assert!(verts.iter().all(|v| v.width_px == 3.5));
+        // Opposite normals per pair, shared position: no quad joins a break.
+        for pair in verts.as_chunks::<2>().0 {
+            assert_eq!(pair[0].position_math, pair[1].position_math);
+            assert!((pair[0].normal_dir[0] + pair[1].normal_dir[0]).abs() < 1e-6);
+            assert!((pair[0].normal_dir[1] + pair[1].normal_dir[1]).abs() < 1e-6);
+        }
+    }
+
+    #[test]
+    fn hidden_style_expands_to_nothing() {
+        let expr = parse("x^2").unwrap();
+        let vp = Viewport::default();
+        let pts = sample_curve(&expr, &HashMap::new(), &vp, 64);
+        let mut style = default_style();
+        style.visible = false;
+        assert!(expand_ribbon(&pts, &style, &vp, 800.0, 600.0).is_empty());
+    }
+
+    #[test]
+    fn ribbon_vertex_is_44_bytes() {
+        assert_eq!(std::mem::size_of::<CurveVertex>(), CURVE_VERTEX_STRIDE);
+        assert_eq!(CURVE_VERTEX_STRIDE, 44);
     }
 }
