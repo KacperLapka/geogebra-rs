@@ -158,12 +158,14 @@ mod tests {
     #[tokio::test]
     async fn unknown_and_malformed_slugs_are_404() {
         let store = test_store().await;
-        let (status, _) = status_text(load(State(store.clone()), Path("AAAAAAAA".to_string())).await).await;
+        let (status, text) = status_text(load(State(store.clone()), Path("AAAAAAAA".to_string())).await).await;
         assert_eq!(status, StatusCode::NOT_FOUND);
+        assert_eq!(text, "unknown workspace");
         for bad in ["short", "way-too-long-slug", "bad slug!", ""] {
-            let (status, _) =
+            let (status, text) =
                 status_text(load(State(store.clone()), Path(bad.to_string())).await).await;
             assert_eq!(status, StatusCode::NOT_FOUND, "slug={bad}");
+            assert_eq!(text, "unknown workspace", "slug={bad}");
         }
     }
 
@@ -171,26 +173,59 @@ mod tests {
     async fn oversize_payload_is_413() {
         let store = test_store().await;
         let big = vec![b'x'; MAX_BODY_BYTES + 1];
-        let (status, _) =
-            status_text(save(State(store), axum::body::Bytes::from(big)).await).await;
+        let (status, text) =
+            status_text(save(State(store.clone()), axum::body::Bytes::from(big)).await).await;
         assert_eq!(status, StatusCode::PAYLOAD_TOO_LARGE);
+        assert_eq!(text, "workspace exceeds 64 KB");
+        assert_eq!(store.count().await, 0);
+    }
+
+    #[tokio::test]
+    async fn exactly_max_body_is_accepted() {
+        let store = test_store().await;
+        let mut doc = tracer_doc();
+        let base_len = serde_json::to_vec(&doc).unwrap().len();
+        let pad = MAX_BODY_BYTES - base_len;
+        doc["functions"]["f"] = serde_json::json!(format!("a*x^2{}", "x".repeat(pad)));
+        let bytes = axum::body::Bytes::from(serde_json::to_vec(&doc).unwrap());
+        assert_eq!(bytes.len(), MAX_BODY_BYTES);
+        let (status, _) = body_json(save(State(store), bytes).await).await;
+        assert_eq!(status, StatusCode::CREATED);
+    }
+
+    #[tokio::test]
+    async fn db_failure_is_500() {
+        let pool = sqlx::SqlitePool::connect("sqlite::memory:").await.unwrap();
+        Store::ensure_table(&pool).await.unwrap();
+        pool.close().await;
+        let store = Arc::new(Store::new(pool));
+        let bytes = axum::body::Bytes::from(serde_json::to_vec(&tracer_doc()).unwrap());
+        let (status, text) = status_text(save(State(store.clone()), bytes).await).await;
+        assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
+        assert_eq!(text, "db error");
+        let (status, text) =
+            status_text(load(State(store), Path("AAAAAAAA".to_string())).await).await;
+        assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
+        assert_eq!(text, "db error");
     }
 
     #[tokio::test]
     async fn invalid_documents_are_400() {
         let store = test_store().await;
         // invalid JSON
-        let (status, _) = status_text(
+        let (status, text) = status_text(
             save(State(store.clone()), axum::body::Bytes::from("{oops")).await,
         )
         .await;
         assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert_eq!(text, "invalid JSON");
         // missing version
         let mut doc = tracer_doc();
         doc.as_object_mut().unwrap().remove("version");
         let bytes = axum::body::Bytes::from(serde_json::to_vec(&doc).unwrap());
-        let (status, _) = status_text(save(State(store.clone()), bytes).await).await;
+        let (status, text) = status_text(save(State(store.clone()), bytes).await).await;
         assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert_eq!(text, "missing version");
         // version 0
         let mut doc = tracer_doc();
         doc["version"] = serde_json::json!(0);
@@ -201,7 +236,8 @@ mod tests {
         let mut doc = tracer_doc();
         doc.as_object_mut().unwrap().remove("viewport");
         let bytes = axum::body::Bytes::from(serde_json::to_vec(&doc).unwrap());
-        let (status, _) = status_text(save(State(store), bytes).await).await;
+        let (status, _) = status_text(save(State(store.clone()), bytes).await).await;
         assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert_eq!(store.count().await, 0);
     }
 }

@@ -163,3 +163,78 @@ test('App.svelte wires Share adjacent to FormulaBar with panel states', () => {
   assert.ok(app.includes('slugFromLocation'), 'load must handle /w/<slug> + ?s fallback');
   assert.ok(app.includes('restoreWorkspace'), 'load must restore via the ABI recipe');
 });
+
+test('oversize shows a one-click manual Retry that re-shares', () => {
+  const app = read('src/App.svelte');
+  assert.ok(app.includes('retry-control'), 'retry control must exist');
+  assert.ok(app.includes('>Retry<'), 'retry must use the Retry microcopy');
+  assert.ok(
+    app.includes('onclick={handleShare}'),
+    'retry must re-run the share flow (fresh serialize + POST)'
+  );
+  assert.ok(
+    app.includes('disabled={shareBusy || !online}'),
+    'retry must block while saving or offline'
+  );
+});
+
+test('Share is disabled offline', () => {
+  const app = read('src/App.svelte');
+  assert.ok(
+    app.includes('disabled={!backend || shareBusy || !online}'),
+    'share control must disable while offline'
+  );
+});
+
+test('save/load map 500 to generic invalid', async () => {
+  assert.deepEqual(await saveWorkspace(doc(), async () => ({ status: 500 })), {
+    ok: false,
+    error: 'invalid'
+  });
+  assert.deepEqual(await loadWorkspace('Ab12-_Xy', async () => ({ status: 500 })), {
+    ok: false,
+    error: 'invalid'
+  });
+});
+
+test('invalid save never reaches the network', async () => {
+  let called = false;
+  const res = await saveWorkspace({ version: 0 }, async () => {
+    called = true;
+    return okJson({}, 201);
+  });
+  assert.deepEqual(res, { ok: false, error: 'invalid' });
+  assert.equal(called, false);
+});
+
+test('invalid slug never reaches the network', async () => {
+  let called = false;
+  const res = await loadWorkspace('short', async () => {
+    called = true;
+    return okJson(doc(), 200);
+  });
+  assert.deepEqual(res, { ok: false, error: 'unknown' });
+  assert.equal(called, false);
+});
+
+test('failed restore leaves the backend untouched', () => {
+  const calls = [];
+  const backend = {
+    setFunction: (...a) => {
+      calls.push(a);
+      return { ok: true, params: [] };
+    },
+    updateParam: (...a) => calls.push(a),
+    updateViewport: (...a) => calls.push(a)
+  };
+  assert.deepEqual(restoreWorkspace(backend, { version: 0 }), {
+    ok: false,
+    error: 'invalid'
+  });
+  assert.deepEqual(calls, []);
+  assert.deepEqual(restoreWorkspace(backend, { ...doc(), functions: { f: 42 } }), {
+    ok: false,
+    error: 'invalid'
+  });
+  assert.deepEqual(calls, []);
+});

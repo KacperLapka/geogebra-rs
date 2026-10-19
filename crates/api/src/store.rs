@@ -119,6 +119,16 @@ fn is_unique_violation(e: &sqlx::Error) -> bool {
 }
 
 #[cfg(test)]
+impl Store {
+    pub async fn count(&self) -> i64 {
+        sqlx::query_scalar("SELECT COUNT(*) FROM workspaces")
+            .fetch_one(&self.pool)
+            .await
+            .unwrap()
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use std::time::Instant;

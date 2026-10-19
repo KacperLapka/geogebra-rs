@@ -1,5 +1,5 @@
 <script>
-  import { onMount } from 'svelte';
+  import { onMount, tick } from 'svelte';
   import FormulaBar from './FormulaBar.svelte';
   import Canvas from './Canvas.svelte';
   import Tooltip from './Tooltip.svelte';
@@ -20,16 +20,55 @@
   let formula = $state('a*x^2');
   let error = $state(null);
   let params = $state({});
-  let points = $state([]);
+  let curves = $state([]);
   let grid = $state({ x: [], y: [] });
   let viewport = $state({ x_min: -10, x_max: 10, y_min: -10, y_max: 10 });
   let hover = $state(null);
   let workspace = $state(null);
   let gpu = $state({ status: 'cpu-fallback', viewport_revision: 0 });
   let fps = $state(null);
-  // Render-owned style mirror for the tracer curve `f`: hex stays local for
-  // the 2D stroke, width/dashed/visibility sync from the bridge return values.
-  let style = $state({ color: '#2563eb', widthPx: 3.5, dashed: false, visible: true });
+  // Three demo curves (4.3): `f` stays formula-bar-driven; `g`/`h` are fixed
+  // demos so the palette/width/visibility polish shows without calculus
+  // (derivative math stays with the symbolic-calculus epic).
+  const DEMO_CURVES = [
+    { id: 'f', formula: 'a*x^2' },
+    { id: 'g', formula: '1/x' },
+    { id: 'h', formula: 'sin(x)' }
+  ];
+  // Local fallback when the bridge style map has no entry for an id;
+  // render-owned truth lives in the bridge (E4-STYLE-STRUCT).
+  const FALLBACK_STYLE = { color: '#2563eb', widthPx: 3.5, dashed: false, visible: true };
+
+  const styleOf = (id) => curves.find((c) => c.id === id)?.style ?? { ...FALLBACK_STYLE };
+
+  function refresh() {
+    if (!backend) return;
+    const ws = backend.serializeWorkspace();
+    workspace = ws;
+    grid = backend.gridLines();
+    gpu = backend.gpuStatus();
+    // Per-id styles from the bridge style map (single source of truth).
+    const nextStyles = {};
+    for (const [id, entry] of Object.entries(ws.style ?? {})) {
+      nextStyles[id] = {
+        color: entry?.color_hex ?? FALLBACK_STYLE.color,
+        widthPx: entry?.width_px ?? FALLBACK_STYLE.widthPx,
+        dashed: entry?.dashed ?? false,
+        visible: entry?.visible ?? true
+      };
+    }
+    // Sample every function known to the session, sorted for stable order.
+    const ids = Object.keys(ws.functions ?? {});
+    ids.sort();
+    curves = ids.map((id) => ({
+      id,
+      points: backend.samplePointsFor(id, 240).points,
+      style: nextStyles[id] ?? { ...FALLBACK_STYLE }
+    }));
+    const known = {};
+    for (const name of Object.keys(ws.params ?? {})) known[name] = params[name] ?? ws.params[name] ?? 1;
+    params = known;
+  }
 
   // Share/load tracer (5.1): Share button + panel + /w/<slug> and ?s=<slug>.
   let shareOpen = $state(false);
@@ -38,23 +77,13 @@
   let shareLink = $state('');
   let shareNote = $state('');
   let shareTone = $state('muted');
+  let shareRetry = $state(false);
   let loadNote = $state('');
   let online = $state(typeof navigator !== 'undefined' ? (navigator.onLine ?? true) : true);
   let shareButtonEl = $state(null);
   let panelEl = $state(null);
   let slugInputEl = $state(null);
-
-  function refresh() {
-    if (!backend) return;
-    const sample = backend.samplePoints(240);
-    points = sample.points;
-    grid = backend.gridLines();
-    workspace = backend.serializeWorkspace();
-    gpu = backend.gpuStatus();
-    const known = {};
-    for (const name of sample.params ?? []) known[name] = params[name] ?? 1;
-    params = known;
-  }
+  let retryEl = $state(null);
 
   function applyFormula(text) {
     if (!backend) return;
@@ -93,22 +122,24 @@
     hover = { px, py, math_x: res.math_x, math_y: res.math_y, marker: res.marker ?? null };
   }
 
-  function handleStyle(colorHex) {
+  function handleStyle(id, colorHex) {
     if (!backend || !/^#[0-9a-fA-F]{6}$/.test(colorHex)) return;
-    const res = backend.setFunctionStyle('f', colorHex, style.widthPx, style.dashed);
-    style = { color: colorHex, widthPx: res?.width_px ?? style.widthPx, dashed: res?.dashed ?? style.dashed, visible: res?.visible ?? style.visible };
+    const cur = styleOf(id);
+    backend.setFunctionStyle(id, colorHex, cur.widthPx, cur.dashed);
+    refresh();
   }
 
-  function handleDashed(dashed) {
+  function handleDashed(id, dashed) {
     if (!backend) return;
-    const res = backend.setFunctionStyle('f', style.color, style.widthPx, !!dashed);
-    style = { ...style, widthPx: res?.width_px ?? style.widthPx, dashed: res?.dashed ?? !!dashed };
+    const cur = styleOf(id);
+    backend.setFunctionStyle(id, cur.color, cur.widthPx, !!dashed);
+    refresh();
   }
 
-  function handleVisibility(visible) {
+  function handleVisibility(id, visible) {
     if (!backend) return;
-    const res = backend.setFunctionVisibility('f', !!visible);
-    style = { ...style, visible: res?.visible ?? !!visible };
+    backend.setFunctionVisibility(id, !!visible);
+    refresh();
   }
 
   function closeShare() {
@@ -131,6 +162,7 @@
     shareLink = '';
     shareNote = 'Saving…';
     shareTone = 'muted';
+    shareRetry = false;
     // Focus the panel for keyboard users once it renders.
     queueMicrotask(() => panelEl?.focus?.());
     const doc = backend.serializeWorkspace();
@@ -144,6 +176,10 @@
     } else if (res.error === 'too-large') {
       shareNote = 'Workspace too large to share.';
       shareTone = 'danger';
+      // Manual retry: panel stays open with the local workspace untouched;
+      // one click re-POSTs the current workspace once it is simplified.
+      shareRetry = true;
+      tick().then(() => retryEl?.focus?.());
     } else if (res.error === 'network' || !online) {
       shareNote = "You're offline. Showing your local workspace.";
       shareTone = 'muted';
@@ -198,6 +234,11 @@
   onMount(async () => {
     backend = await getBackend();
     backend.setCanvasSize(800, 420);
+    // Fixed demo curves so the 4.3 palette shows three ribbons; `f` flows
+    // through the formula bar below.
+    for (const c of DEMO_CURVES) {
+      if (c.id !== 'f') backend.setFunction(c.id, c.formula);
+    }
     applyFormula(formula);
     const goOnline = () => (online = true);
     const goOffline = () => (online = false);
@@ -273,6 +314,14 @@
           aria-readonly="true"
         />
         <button class="copy-control" disabled={!shareSlug} onclick={handleCopy}>Copy</button>
+        {#if shareRetry}
+          <button
+            class="retry-control"
+            bind:this={retryEl}
+            disabled={shareBusy || !online}
+            onclick={handleShare}
+          >Retry</button>
+        {/if}
       </div>
       <p class="status-note {shareTone}" aria-live="polite">
         {#if shareBusy}Saving…{:else if shareNote}{shareNote}{:else if shareSlug}Ready — copy the link.{/if}
@@ -285,11 +334,10 @@
   {/if}
 
   <Canvas
-    {points}
+    {curves}
     {viewport}
     {grid}
     {hover}
-    {style}
     onViewport={handleViewport}
     onHover={handleHover}
     onLeave={() => (hover = null)}
@@ -299,21 +347,25 @@
     <Tooltip {hover} />
   </Canvas>
 
-  <StyleControls
-    colorHex={style.color}
-    widthPx={style.widthPx}
-    dashed={style.dashed}
-    visible={style.visible}
-    onStyle={handleStyle}
-    onDashed={handleDashed}
-    onVisibility={handleVisibility}
-  />
+  {#each curves as curve (curve.id)}
+    <StyleControls
+      curveId={curve.id}
+      colorHex={curve.style.color}
+      widthPx={curve.style.widthPx}
+      dashed={curve.style.dashed}
+      visible={curve.style.visible}
+      onStyle={(hex) => handleStyle(curve.id, hex)}
+      onDashed={(dashed) => handleDashed(curve.id, dashed)}
+      onVisibility={(visible) => handleVisibility(curve.id, visible)}
+    />
+  {/each}
 
   <Sliders {params} onParam={handleParam} />
 
   {#if workspace}
-    <!-- Workspace JSON owned shape for Epic 5: {version:1, functions, params, viewport}.
-         Restored via setFunction + updateParam + updateViewport (AD-5, no new ABI). -->
+    <!-- Workspace JSON owned shape for Epic 5: {version:1, functions, params, viewport, style}.
+         Restored via setFunction + updateParam + updateViewport + the style
+         setters (AD-5, no new ABI). -->
     <details class="workspace">
       <summary>workspace JSON (version {workspace.version})</summary>
       <pre>{JSON.stringify(workspace, null, 2)}</pre>
