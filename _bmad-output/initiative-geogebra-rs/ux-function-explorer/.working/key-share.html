@@ -1,0 +1,135 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=1120">
+<title>Function explorer — share row live + fail variants</title>
+<style>
+/* Governing spine: EXPERIENCE.md §§ Component Patterns (share row R11-R12, AD-6 slug/version/cap), State Patterns (share fail, offline), Key Flows/Flow 2 (+ failure branches); DESIGN.md §§ Components (share-row), Voice (Copied. / Couldn't create the link. Try again. / You're offline — sharing needs a connection.). */
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:#F7F7FC;color:#1E1B33;font-family:Inter,system-ui,-apple-system,"Segoe UI",sans-serif;font-size:14px;line-height:1.5}
+.page{max-width:1120px;margin:0 auto;padding:28px 24px 48px}
+.eyebrow{font-size:11px;font-weight:600;letter-spacing:.12em;color:#6E6B8A;text-transform:uppercase}
+.eyebrow .dash{color:#4F46E5;margin-right:8px}
+h1{font-size:28px;font-weight:800;letter-spacing:-.02em;margin:8px 0 4px}
+h1 .accent{color:#4F46E5}
+.sub{color:#6E6B8A;margin-bottom:20px}
+.card{background:#fff;border:1px solid #E6E5F1;border-radius:14px}
+.work{display:grid;grid-template-columns:2fr 1fr;gap:24px;align-items:start}
+.fbar{padding:16px 20px 14px;margin-bottom:20px}
+.fbar-top{display:flex;justify-content:space-between;margin-bottom:10px}
+.fbar-top b{font-size:13px}
+.hint{font-size:12px;color:#6E6B8A}
+.hint .xvar{display:inline-block;border:1px solid #E6E5F1;border-radius:6px;padding:0 6px;font-family:ui-monospace,Menlo,monospace;font-size:12px;background:#F1F0FA}
+.frow{display:flex;gap:12px}
+.finput{flex:1;display:flex;align-items:center;border:1px solid #E6E5F1;border-radius:10px;padding:10px 12px;font-family:ui-monospace,Menlo,monospace;font-size:15px;font-weight:500}
+.btn{background:#4F46E5;color:#fff;border:none;border-radius:10px;padding:12px 20px;font-weight:600;font-size:14px;box-shadow:0 4px 14px rgba(79,70,229,.35);white-space:nowrap;cursor:pointer}
+.examples{font-size:12px;color:#6E6B8A;margin-top:8px}
+.graph{padding:18px 20px 12px}
+.graph h2{font-size:16px;font-weight:700;margin:2px 0 10px}
+.legend{display:flex;gap:16px;font-size:12px;color:#6E6B8A;margin:2px 0 8px}
+.sw{display:inline-block;width:18px;height:0;vertical-align:middle;margin-right:6px}
+.sw.f{border-top:3px solid #4F46E5}.sw.g{border-top:2px dashed #1FA36B}.sw.a{border-top:2px dashed #E8930C}
+.canvaswrap{border:1px solid #E6E5F1;border-radius:10px;overflow:hidden}
+.canvaswrap svg{display:block;width:100%;height:auto}
+.gfoot{display:flex;justify-content:space-between;font-size:12px;color:#6E6B8A;padding:8px 2px 4px}
+.rail{display:flex;flex-direction:column;gap:16px}
+.mini{padding:16px 18px}
+.mini h2{font-size:16px;margin:2px 0 6px}
+.formula{font-family:ui-monospace,Menlo,monospace;font-size:15px;font-weight:600;margin:8px 0 2px}
+.mini p{font-size:13px;color:#6E6B8A}
+.badge{font-size:11px;letter-spacing:.06em;color:#6E6B8A;display:flex;align-items:center;gap:6px;justify-content:flex-end}
+.badge .dot{width:7px;height:7px;border-radius:50%;background:#16A34A;display:inline-block}
+.vrow{display:flex;justify-content:space-between;padding:8px 0;border-top:1px solid #E6E5F1;font-size:13px}
+.vrow .k{color:#6E6B8A}.vrow .v{font-family:ui-monospace,Menlo,monospace;font-weight:600}
+.vrow .v.green{color:#16A34A}.vrow .v.amber{color:#E8930C}
+.share{background:#F1F0FA;border-radius:10px;padding:12px 14px;margin-top:12px}
+.share .t{font-size:11px;font-weight:600;letter-spacing:.08em;color:#6E6B8A;text-transform:uppercase;margin-bottom:8px}
+.linkrow{display:flex;gap:8px;align-items:center}
+.link{flex:1;font-family:ui-monospace,Menlo,monospace;font-size:12px;background:#fff;border:1px solid #E6E5F1;border-radius:8px;padding:8px 10px;color:#1E1B33;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.copy{background:#4F46E5;color:#fff;border:none;border-radius:8px;padding:8px 14px;font-size:13px;font-weight:600;cursor:pointer}
+.confirm{font-size:12px;color:#16A34A;margin-top:8px}
+.fail{font-size:12px;color:#DC2626;margin-top:8px}
+.off{font-size:12px;color:#6E6B8A;margin-top:8px}
+.retry{background:#fff;border:1px solid #E6E5F1;border-radius:8px;padding:7px 14px;font-size:13px;font-weight:600;color:#4F46E5;cursor:pointer;margin-top:8px}
+.cols{display:grid;grid-template-columns:1fr 1fr;gap:24px;margin-top:24px}
+.variant{padding:18px 20px}
+.variant h3{font-size:15px;margin:4px 0 6px}
+.variant p{font-size:13px;color:#6E6B8A}
+.xpill{font-family:ui-monospace,Menlo,monospace;font-size:12px;background:#F1F0FA;border-radius:9999px;padding:3px 10px;color:#4F46E5}
+</style>
+</head>
+<body>
+<div class="page">
+  <div class="eyebrow"><span class="dash">—</span>YOUR FRIENDLY CALCULUS TOOL</div>
+  <h1>Bring the graph <span class="accent">to class.</span></h1>
+  <p class="sub">Analyze once, copy the shortlink — students open your exact setup. No accounts, no dictation.</p>
+
+  <div class="card fbar">
+    <div class="fbar-top"><b>Your function</b><span class="hint">Use <span class="xvar">x</span> as your variable</span></div>
+    <div class="frow"><div class="finput"><span>f(x) = a·x²+b&nbsp;&nbsp;(a = 1, b = 0)</span></div><button class="btn">Analyze function ↗</button></div>
+    <div class="examples">Examples: sin(x), x^2 e^x, log(x)</div>
+  </div>
+
+  <div class="work">
+    <div class="card graph">
+      <div class="eyebrow">Visual explorer</div><h2>Graph view</h2>
+      <div class="legend"><span><span class="sw f"></span>f(x)</span><span><span class="sw g"></span>f′(x)</span><span><span class="sw a"></span>tangent</span></div>
+      <div class="canvaswrap" role="img" aria-label="Parabola shared with the class">
+        <svg viewBox="0 0 600 280" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+          <g stroke="#EDECF5" stroke-width="1"><line x1="40" y1="0" x2="40" y2="280"/><line x1="120" y1="0" x2="120" y2="280"/><line x1="200" y1="0" x2="200" y2="280"/><line x1="280" y1="0" x2="280" y2="280"/><line x1="360" y1="0" x2="360" y2="280"/><line x1="440" y1="0" x2="440" y2="280"/><line x1="520" y1="0" x2="520" y2="280"/><line x1="0" y1="60" x2="600" y2="60"/><line x1="0" y1="120" x2="600" y2="120"/><line x1="0" y1="180" x2="600" y2="180"/><line x1="0" y1="240" x2="600" y2="240"/></g>
+          <line x1="0" y1="180" x2="600" y2="180" stroke="#9C99B8" stroke-width="1"/>
+          <line x1="300" y1="0" x2="300" y2="280" stroke="#9C99B8" stroke-width="1"/>
+          <path d="M100,40 C180,90 250,150 300,180 C350,150 420,90 500,40" fill="none" stroke="#4F46E5" stroke-width="2.5"/>
+          <line x1="160" y1="200" x2="440" y2="160" stroke="#E8930C" stroke-width="2" stroke-dasharray="7 5"/>
+          <circle cx="300" cy="180" r="7" fill="#4F46E5" stroke="#fff" stroke-width="2.5"/>
+        </svg>
+      </div>
+      <div class="gfoot"><span>x-axis</span><span>Showing x from −5 to 5</span></div>
+    </div>
+
+    <div class="rail">
+      <div class="card mini">
+        <div style="display:flex;justify-content:space-between;align-items:center"><span class="eyebrow">First derivative</span><span class="badge"><span class="dot"></span>CALCULATED</span></div>
+        <div class="formula">f′(x) = 2·a·x</div>
+        <p>The function&#8217;s rate of change at every point.</p>
+      </div>
+      <div class="card mini">
+        <div class="eyebrow">Point analysis</div>
+        <div style="display:flex;justify-content:space-between;align-items:center"><h2>At a glance</h2><span class="xpill">x = 0.0</span></div>
+        <div class="vrow"><span class="k">Function value</span><span class="v">0.000</span></div>
+        <div class="vrow"><span class="k">Instantaneous slope</span><span class="v">0.000</span></div>
+        <div class="vrow"><span class="k">Local behavior</span><span class="v amber">Stationary</span></div>
+        <div class="share">
+          <div class="t">Share this view</div>
+          <div class="linkrow"><span class="link">explorer.example/s/a1B2c3D4</span><button class="copy">Copy</button></div>
+          <div class="confirm">Copied.</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="cols">
+    <div class="card variant">
+      <div class="eyebrow">When the network drops</div>
+      <h3>The link fails — the math stays.</h3>
+      <p>Retry is inline. Slider position, toggles, and analysis are untouched.</p>
+      <div class="share">
+        <div class="t">Share this view</div>
+        <div class="fail">Couldn&#8217;t create the link. Try again.</div>
+        <button class="retry">Retry</button>
+      </div>
+    </div>
+    <div class="card variant">
+      <div class="eyebrow">Offline opener</div>
+      <h3>Cached graph works, sharing waits.</h3>
+      <p>Analyze on cached values still works offline. Sharing needs a connection — no blocking modal.</p>
+      <div class="share">
+        <div class="t">Share this view</div>
+        <div class="off">You&#8217;re offline — sharing needs a connection.</div>
+      </div>
+    </div>
+  </div>
+</div>
+</body>
+</html>

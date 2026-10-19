@@ -1,0 +1,178 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=1120">
+<title>Function explorer — analysis layer + error state</title>
+<style>
+/* Governing spine: EXPERIENCE.md §§ Component Patterns (param slider R2, derivative f'' R3, analysis marker R5-R6, pole/asymptote R7, legend/curve-toggle R10, parse-error R1), State Patterns (parse error, pole), Key Flows/Flow 3 + Flow 4 + Flow 1-failure; DESIGN.md §§ Colors (fdouble purple, asymptote gray, error red, marker root/extremum/inflection), Components (param-slider, analysis-marker, error-text, curve-toggle). */
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:#F7F7FC;color:#1E1B33;font-family:Inter,system-ui,-apple-system,"Segoe UI",sans-serif;font-size:14px;line-height:1.5}
+.page{max-width:1120px;margin:0 auto;padding:28px 24px 48px}
+.eyebrow{font-size:11px;font-weight:600;letter-spacing:.12em;color:#6E6B8A;text-transform:uppercase}
+.eyebrow .dash{color:#4F46E5;margin-right:8px}
+h1{font-size:28px;font-weight:800;letter-spacing:-.02em;margin:8px 0 4px}
+h1 .accent{color:#4F46E5}
+.sub{color:#6E6B8A;margin-bottom:20px}
+.card{background:#fff;border:1px solid #E6E5F1;border-radius:14px}
+.fbar{padding:16px 20px 14px}
+.fbar-top{display:flex;justify-content:space-between;align-items:center;margin-bottom:10px}
+.fbar-top b{font-size:13px}
+.hint{font-size:12px;color:#6E6B8A}
+.hint .xvar{display:inline-block;border:1px solid #E6E5F1;border-radius:6px;padding:0 6px;font-family:ui-monospace,Menlo,monospace;font-size:12px;background:#F1F0FA}
+.frow{display:flex;gap:12px}
+.finput{flex:1;display:flex;align-items:center;gap:8px;border:1px solid #E6E5F1;border-radius:10px;padding:10px 12px;font-family:ui-monospace,Menlo,monospace;font-size:15px;font-weight:500}
+.finput .clear{margin-left:auto;color:#9C99B8;border:none;background:none;font-size:16px;cursor:pointer}
+.btn{background:#4F46E5;color:#fff;border:none;border-radius:10px;padding:0 20px;font-weight:600;font-size:14px;cursor:pointer;box-shadow:0 4px 14px rgba(79,70,229,.35);white-space:nowrap}
+.params{display:flex;gap:28px;margin-top:12px;padding-top:12px;border-top:1px solid #E6E5F1}
+.param{flex:1}
+.param .pl{display:flex;justify-content:space-between;font-size:12px;color:#6E6B8A;margin-bottom:6px}
+.param .pl b{font-family:ui-monospace,Menlo,monospace;color:#1E1B33}
+.pslider{position:relative;height:18px}
+.ptrack{position:absolute;top:6px;left:0;right:0;height:5px;border-radius:9999px;background:#D9D7EF}
+.pfill{position:absolute;top:6px;left:0;height:5px;border-radius:9999px;background:#4F46E5}
+.pthumb{position:absolute;top:1px;width:14px;height:14px;border-radius:50%;background:#4F46E5;border:2px solid #fff;box-shadow:0 0 0 1px #4F46E5;transform:translateX(-50%)}
+.tryrow{display:flex;align-items:center;gap:8px;margin:14px 4px 20px}
+.tryrow .lbl{font-size:11px;font-weight:600;letter-spacing:.08em;color:#9C99B8}
+.chip{border:1px solid #E6E5F1;background:#fff;border-radius:6px;padding:5px 12px;font-size:12px;color:#6E6B8A}
+.chip.active{background:#EDECFD;color:#4F46E5;border-color:#EDECFD;font-weight:600}
+.work{display:grid;grid-template-columns:2fr 1fr;gap:24px;align-items:start}
+.graph{padding:18px 20px 12px}
+.graph h2,.rail h2{font-size:16px;font-weight:700;margin:2px 0 10px}
+.toolbar{display:flex;gap:6px;align-items:center;flex-wrap:wrap;justify-content:flex-end}
+.pill{font-size:11px;border:1px solid #E6E5F1;border-radius:9999px;padding:3px 10px;font-family:ui-monospace,Menlo,monospace;background:#fff;color:#6E6B8A}
+.pill.on-f{color:#4F46E5;border-color:#4F46E5}.pill.on-g{color:#1FA36B;border-color:#1FA36B}.pill.on-p{color:#9333EA;border-color:#9333EA}.pill.on-m{background:#4F46E5;color:#fff;border-color:#4F46E5}
+.tbtn{width:28px;height:28px;border:1px solid #E6E5F1;background:#fff;border-radius:8px;color:#6E6B8A;font-size:14px;line-height:1;cursor:pointer}
+.legend{display:flex;gap:14px;flex-wrap:wrap;font-size:12px;color:#6E6B8A;margin:8px 0}
+.sw{display:inline-block;width:18px;height:0;vertical-align:middle;margin-right:6px}
+.sw.f{border-top:3px solid #4F46E5}.sw.g{border-top:2px dashed #1FA36B}.sw.p{border-top:2px dashed #9333EA}.sw.a{border-top:2px dashed #E8930C}
+.dotk{display:inline-block;width:9px;height:9px;border-radius:50%;margin-right:5px;vertical-align:baseline}
+.canvaswrap{position:relative;border:1px solid #E6E5F1;border-radius:10px;overflow:hidden;background:#fff}
+.canvaswrap svg{display:block;width:100%;height:auto}
+.tip{position:absolute;left:47%;top:30%;background:#1E1B33;color:#fff;font-size:12px;font-family:ui-monospace,Menlo,monospace;border-radius:8px;padding:6px 10px;transform:translate(-50%,-115%);white-space:nowrap}
+.tip:after{content:"";position:absolute;left:50%;bottom:-5px;width:10px;height:10px;background:#1E1B33;transform:translateX(-50%) rotate(45deg)}
+.tip small{display:block;font-family:Inter,system-ui,sans-serif;color:#C9C7E4;font-size:11px}
+.gfoot{display:flex;justify-content:space-between;font-size:12px;color:#6E6B8A;padding:8px 2px 4px}
+.rail{display:flex;flex-direction:column;gap:24px}
+.dcard{padding:16px 18px;position:relative}
+.badge{position:absolute;top:16px;right:16px;font-size:11px;letter-spacing:.06em;color:#6E6B8A;display:flex;align-items:center;gap:6px}
+.badge .dot{width:7px;height:7px;border-radius:50%;background:#16A34A;display:inline-block}
+.formula{font-family:ui-monospace,Menlo,monospace;font-size:15px;font-weight:600;margin:8px 0 2px}
+.formula.ff{color:#9333EA;font-size:13px;font-weight:500}
+.dcard p{font-size:13px;color:#6E6B8A}
+.pcard{padding:16px 18px}
+.xrow{display:flex;justify-content:space-between;align-items:center;margin:6px 0 10px}
+.xpill{font-family:ui-monospace,Menlo,monospace;font-size:12px;background:#F1F0FA;border-radius:9999px;padding:3px 10px;color:#4F46E5}
+.vrow{display:flex;justify-content:space-between;padding:9px 0;border-top:1px solid #E6E5F1;font-size:13px}
+.vrow .k{color:#6E6B8A}.vrow .v{font-family:ui-monospace,Menlo,monospace;font-weight:600}
+.variants{display:grid;grid-template-columns:1fr 1fr;gap:24px;margin-top:24px}
+.variant{padding:18px 20px}
+.variant h3{font-size:15px;margin:4px 0 6px}
+.variant p{font-size:13px;color:#6E6B8A;margin-bottom:10px}
+.finput.err{border-color:#DC2626}
+.err-text{color:#DC2626;font-size:12px;margin-top:8px}
+.btn.disabled{background:#9C99B8;box-shadow:none;cursor:not-allowed}
+.mini-grid{border:1px solid #E6E5F1;border-radius:10px;overflow:hidden}
+.mini-grid svg{display:block;width:100%;height:auto}
+.poleread{font-family:ui-monospace,Menlo,monospace;font-size:12px;background:#F1F0FA;border-radius:8px;padding:6px 10px;margin-top:10px;color:#6E6B8A}
+.cap{font-size:12px;color:#6E6B8A}
+</style>
+</head>
+<body>
+<div class="page">
+  <div class="eyebrow"><span class="dash">—</span>YOUR FRIENDLY CALCULUS TOOL</div>
+  <h1>Check the turning <span class="accent">points.</span></h1>
+  <p class="sub">Markers, second derivative, and parameters — the same workspace, one layer deeper.</p>
+
+  <div class="card fbar">
+    <div class="fbar-top"><b>Your function</b><span class="hint">Use <span class="xvar">x</span> as your variable</span></div>
+    <div class="frow">
+      <div class="finput"><span>f(x) = a·x²+b</span><button class="clear" aria-label="Clear">×</button></div>
+      <button class="btn">Analyze function ↗</button>
+    </div>
+    <div class="params">
+      <div class="param"><div class="pl"><span>Parameter a</span><b>a = 1</b></div><div class="pslider"><div class="ptrack"></div><div class="pfill" style="width:60%"></div><div class="pthumb" style="left:60%"></div></div></div>
+      <div class="param"><div class="pl"><span>Parameter b</span><b>b = 0</b></div><div class="pslider"><div class="ptrack"></div><div class="pfill" style="width:50%"></div><div class="pthumb" style="left:50%"></div></div></div>
+    </div>
+  </div>
+
+  <div class="tryrow"><span class="lbl">TRY ONE</span>
+    <span class="chip active">Quadratic</span><span class="chip">Sine wave</span><span class="chip">Cubic</span><span class="chip">Exponential</span>
+  </div>
+
+  <div class="work">
+    <div class="card graph">
+      <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px">
+        <div><div class="eyebrow">Visual explorer</div><h2>Graph view</h2></div>
+        <div class="toolbar"><span class="pill on-f">— f(x)</span><span class="pill on-g">- - f′(x)</span><span class="pill on-p">- - f″</span><span class="pill on-m">● markers on</span><button class="tbtn">+</button><button class="tbtn">−</button><button class="tbtn">↺</button></div>
+      </div>
+      <div class="legend"><span><span class="sw f"></span>f(x)</span><span><span class="sw g"></span>f′(x)</span><span><span class="sw p"></span>f″(x)</span><span><span class="sw a"></span>tangent</span><span><span class="dotk" style="background:#DC2626"></span>root <span class="dotk" style="background:#4F46E5"></span>extremum <span class="dotk" style="background:#1FA36B"></span>inflection</span></div>
+      <div class="canvaswrap" role="img" aria-label="Parabola a x squared plus b with extremum marker at the vertex and second derivative shown">
+        <div class="tip">Extremum at (0.0, 0.0)<small>minimum · click for details</small></div>
+        <svg viewBox="0 0 600 320" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+          <g stroke="#EDECF5" stroke-width="1">
+            <line x1="40" y1="10" x2="40" y2="280"/><line x1="110" y1="10" x2="110" y2="280"/><line x1="180" y1="10" x2="180" y2="280"/><line x1="250" y1="10" x2="250" y2="280"/><line x1="320" y1="10" x2="320" y2="280"/><line x1="390" y1="10" x2="390" y2="280"/><line x1="460" y1="10" x2="460" y2="280"/><line x1="530" y1="10" x2="530" y2="280"/>
+            <line x1="10" y1="40" x2="590" y2="40"/><line x1="10" y1="90" x2="590" y2="90"/><line x1="10" y1="140" x2="590" y2="140"/><line x1="10" y1="190" x2="590" y2="190"/><line x1="10" y1="240" x2="590" y2="240"/>
+          </g>
+          <line x1="10" y1="190" x2="590" y2="190" stroke="#9C99B8" stroke-width="1"/>
+          <line x1="300" y1="10" x2="300" y2="280" stroke="#9C99B8" stroke-width="1"/>
+          <line x1="10" y1="140" x2="590" y2="140" stroke="#9333EA" stroke-width="2" stroke-dasharray="7 5"/>
+          <line x1="60" y1="40" x2="540" y2="270" stroke="#1FA36B" stroke-width="2" stroke-dasharray="7 5"/>
+          <line x1="120" y1="210" x2="480" y2="170" stroke="#E8930C" stroke-width="2" stroke-dasharray="7 5"/>
+          <path d="M80,40 C160,90 240,160 300,190 C360,160 440,90 520,40" fill="none" stroke="#4F46E5" stroke-width="2.5"/>
+          <circle cx="180" cy="132" r="6" fill="#DC2626" stroke="#fff" stroke-width="2"/>
+          <circle cx="420" cy="132" r="6" fill="#DC2626" stroke="#fff" stroke-width="2"/>
+          <circle cx="300" cy="190" r="7" fill="#4F46E5" stroke="#fff" stroke-width="2.5"/>
+          <circle cx="238" cy="168" r="6" fill="#1FA36B" stroke="#fff" stroke-width="2"/>
+          <circle cx="362" cy="168" r="6" fill="#1FA36B" stroke="#fff" stroke-width="2"/>
+        </svg>
+      </div>
+      <div class="gfoot"><span>x-axis</span><span>Showing x from −5 to 5</span></div>
+    </div>
+    <div class="rail">
+      <div class="card dcard">
+        <span class="badge"><span class="dot"></span>CALCULATED</span>
+        <div class="eyebrow">First derivative</div>
+        <div class="formula">f′(x) = 2·a·x</div>
+        <div class="formula ff">f″(x) = 2·a</div>
+        <p>The function&#8217;s rate of change at every point.</p>
+      </div>
+      <div class="card pcard">
+        <div class="eyebrow">Point analysis</div>
+        <div class="xrow"><h2>At a glance</h2><span class="xpill">x = 0.0</span></div>
+        <p class="cap">Move along the curve</p>
+        <div class="vrow"><span class="k">Function value</span><span class="v">0.000</span></div>
+        <div class="vrow"><span class="k">Instantaneous slope</span><span class="v">0.000</span></div>
+        <div class="vrow"><span class="k">Local behavior</span><span class="v" style="color:#E8930C">Stationary</span></div>
+        <div class="vrow"><span class="k">Tangent line</span><span class="v" style="color:#E8930C">y = 0.000x + 0.000</span></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="variants">
+    <div class="card variant">
+      <div class="eyebrow">Pole encounter · 1/x</div>
+      <h3>The curve breaks — it never bridges.</h3>
+      <p>Gray dashed asymptote at x = 0. At the pole the readout holds “—”, never a finite number.</p>
+      <div class="mini-grid" role="img" aria-label="One over x with broken branches and gray dashed asymptote">
+        <svg viewBox="0 0 300 170" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+          <g stroke="#EDECF5" stroke-width="1"><line x1="50" y1="0" x2="50" y2="170"/><line x1="100" y1="0" x2="100" y2="170"/><line x1="200" y1="0" x2="200" y2="170"/><line x1="250" y1="0" x2="250" y2="170"/><line x1="0" y1="42" x2="300" y2="42"/><line x1="0" y1="85" x2="300" y2="85"/><line x1="0" y1="128" x2="300" y2="128"/></g>
+          <line x1="150" y1="0" x2="150" y2="170" stroke="#B9B8D0" stroke-width="2" stroke-dasharray="6 5"/>
+          <path d="M10,128 C60,120 100,100 138,60" fill="none" stroke="#4F46E5" stroke-width="2.5"/>
+          <path d="M162,110 C200,70 240,50 290,42" fill="none" stroke="#4F46E5" stroke-width="2.5"/>
+        </svg>
+      </div>
+      <div class="poleread">x = 0 → value — · slope —</div>
+    </div>
+    <div class="card variant">
+      <div class="eyebrow">Error state · char-exact</div>
+      <h3>A missing paren, caught in under 50&nbsp;ms.</h3>
+      <p>Analyze stays disabled. The graph keeps its last good state — nothing flashes, nothing pops up.</p>
+      <div class="finput err"><span>f(x) = e^(0.5x</span><button class="clear" aria-label="Clear">×</button></div>
+      <div class="err-text">Missing ‘)’ at position 7</div>
+      <div style="margin-top:12px"><button class="btn disabled" disabled>Analyze function ↗</button></div>
+    </div>
+  </div>
+</div>
+</body>
+</html>
