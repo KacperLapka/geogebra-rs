@@ -319,4 +319,76 @@ mod tests {
             );
         }
     }
+
+    #[test]
+    fn differentiates_rational_and_power_forms() {
+        // (1/x)' = -1/x^2; (x^3)' = 3x^2; (x/(x+1))' = 1/(x+1)^2;
+        // (2^x)' = 2^x·ln2; (x^x)' = x^x·(ln x + 1) via log-diff.
+        let cases: &[(&str, &[f64], fn(f64) -> f64)] = &[
+            ("1/x", &[0.5, 2.0, -1.5], |x| -1.0 / (x * x)),
+            ("x^3", &[0.0, 2.0, -1.5], |x| 3.0 * x * x),
+            ("x^4", &[1.5], |x| 4.0 * x * x * x),
+            (
+                "x/(x+1)",
+                &[0.0, 2.0, -0.5],
+                |x| 1.0 / ((x + 1.0) * (x + 1.0)),
+            ),
+            ("2^x", &[0.0, 1.0], |x| 2f64.powf(x) * 2f64.ln()),
+            ("x^x", &[1.0, 2.0], |x| x.powf(x) * (x.ln() + 1.0)),
+        ];
+        for (formula, xs, want) in cases {
+            let d = deriv(formula);
+            for x in *xs {
+                assert!(
+                    (eval_at(&d, *x) - want(*x)).abs() < 1e-12,
+                    "{formula} x={x}: got {} want {}",
+                    eval_at(&d, *x),
+                    want(*x)
+                );
+            }
+        }
+        // d/dx (x/x) collapses through the x-x fold to exactly 0.
+        let d = deriv("x/x");
+        assert!(
+            matches!(d, Expr::Number { value, .. } if value == 0.0),
+            "canonical: got {d:?}"
+        );
+    }
+
+    #[test]
+    fn rational_second_derivatives_stay_bounded() {
+        // (1/x)'' = 2/x^3; (x^3)'' = 6x; second derivation terminates
+        // with a finite simplified tree (no unbounded AST growth).
+        fn nodes(e: &Expr) -> usize {
+            match e {
+                Expr::Number { .. } | Expr::Variable { .. } | Expr::Param { .. } => 1,
+                Expr::Unary { expr, .. } => 1 + nodes(expr),
+                Expr::Binary { left, right, .. } => 1 + nodes(left) + nodes(right),
+                Expr::Call { arg, .. } => 1 + nodes(arg),
+            }
+        }
+        let r = parse("1/x").unwrap();
+        let r2 = differentiate(&differentiate(&r, "x"), "x");
+        for x in [0.5, 2.0, -1.5] {
+            assert!(
+                (eval_at(&r2, x) - 2.0 / (x * x * x)).abs() < 1e-12,
+                "1/x'' x={x}"
+            );
+        }
+        let p = parse("x^3").unwrap();
+        let p2 = differentiate(&differentiate(&p, "x"), "x");
+        for x in [0.0, 2.0, -1.5] {
+            assert!(
+                (eval_at(&p2, x) - 6.0 * x).abs() < 1e-12,
+                "x^3'' x={x}"
+            );
+        }
+        let q = parse("(x^2+1)/(x+1)").unwrap();
+        let q1 = differentiate(&q, "x");
+        let q2 = differentiate(&q1, "x");
+        assert!(nodes(&q2) < 60, "growth: got {} nodes", nodes(&q2));
+        // Spot-check numerics: q'(1.5) = 0.68, q''(1.5) = 0.256.
+        assert!((eval_at(&q1, 1.5) - 0.68).abs() < 1e-12);
+        assert!((eval_at(&q2, 1.5) - 0.256).abs() < 1e-12);
+    }
 }

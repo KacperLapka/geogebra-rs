@@ -86,6 +86,41 @@ fn as_num(e: &Expr) -> Option<f64> {
     }
 }
 
+/// Span-insensitive structural equality: `x-x` folds even though the two
+/// `x` leaves carry different source spans (derived `PartialEq` compares
+/// spans and would miss it).
+fn same_shape(a: &Expr, b: &Expr) -> bool {
+    match (a, b) {
+        (Expr::Number { value: x, .. }, Expr::Number { value: y, .. }) => x == y,
+        (
+            Expr::Variable { name: x, .. },
+            Expr::Variable { name: y, .. },
+        ) => x == y,
+        (Expr::Param { name: x, .. }, Expr::Param { name: y, .. }) => x == y,
+        (
+            Expr::Unary { op: op_a, expr: a, .. },
+            Expr::Unary { op: op_b, expr: b, .. },
+        ) => op_a == op_b && same_shape(a, b),
+        (
+            Expr::Binary {
+                op: op_a, left: la, right: ra, ..
+            },
+            Expr::Binary {
+                op: op_b, left: lb, right: rb, ..
+            },
+        ) => op_a == op_b && same_shape(la, lb) && same_shape(ra, rb),
+        (
+            Expr::Call {
+                func: fa, arg: aa, ..
+            },
+            Expr::Call {
+                func: fb, arg: ab, ..
+            },
+        ) => fa == fb && same_shape(aa, ab),
+        _ => false,
+    }
+}
+
 fn simplify_binary(op: BinOp, l: Expr, r: Expr, span: Span) -> Expr {
     // constant folding
     if let (Some(a), Some(b)) = (as_num(&l), as_num(&r)) {
@@ -119,6 +154,9 @@ fn simplify_binary(op: BinOp, l: Expr, r: Expr, span: Span) -> Expr {
                     span,
                 };
             }
+            if same_shape(&l, &r) {
+                return num(0.0, span);
+            }
             binary(op, l, r, span)
         }
         BinOp::Mul => {
@@ -139,6 +177,9 @@ fn simplify_binary(op: BinOp, l: Expr, r: Expr, span: Span) -> Expr {
             }
             if is_one(&r) {
                 return l;
+            }
+            if same_shape(&l, &r) {
+                return num(1.0, span);
             }
             binary(op, l, r, span)
         }
@@ -197,5 +238,16 @@ mod tests {
     fn normalizes_double_negation() {
         let e = simp("--x");
         assert!(matches!(e, Expr::Variable { .. }));
+    }
+
+    #[test]
+    fn folds_matching_difference_and_quotient() {
+        // Span-insensitive: the two `x` leaves differ in span.
+        assert!(is_zero(&simp("x-x")));
+        assert!(is_zero(&simp("(x^2+1)-(x^2+1)")));
+        let e = simp("x/x");
+        assert!(matches!(e, Expr::Number { value, .. } if value == 1.0));
+        let e = simp("(x+1)/(x+1)");
+        assert!(matches!(e, Expr::Number { value, .. } if value == 1.0));
     }
 }
