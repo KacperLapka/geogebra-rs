@@ -622,7 +622,7 @@
     display: grid;
     grid-template-columns: 2fr 1fr;
     column-gap: 24px;
-    row-gap: 16px;
+    row-gap: 8px;
     margin-top: 16px;
   }
   /* DOM order (toggles → point → markers → share) is the tab order;

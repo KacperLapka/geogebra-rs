@@ -38,7 +38,7 @@
     flex-wrap: wrap;
     font-size: 12px;
     color: #6e6b8a;
-    margin: 8px 0;
+    margin: 8px 0 0;
   }
   .legend-item {
     display: inline-flex;
