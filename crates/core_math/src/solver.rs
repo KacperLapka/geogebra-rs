@@ -226,6 +226,115 @@ pub fn find_roots(
     roots
 }
 
+/// Shared scan-refine-filter-dedup pipeline for derived-expression zeros.
+///
+/// Mirrors [`find_roots`] exactly: [`scan_sign_changes`] brackets plus
+/// [`brent`] refine at `tol` (100 iterations), finite + `1e-9` residual
+/// filter, `1e-9` dedup. Returns refined x-coordinates.
+fn refined_derived_zeros(
+    derived: &Expr,
+    params: &HashMap<String, f64>,
+    x_min: f64,
+    x_max: f64,
+    steps: usize,
+    tol: f64,
+) -> Vec<f64> {
+    let mut zeros = Vec::new();
+    for (a, b) in scan_sign_changes(derived, params, x_min, x_max, steps) {
+        if let Some(r) = brent(|x| derived.eval(x, params), a, b, tol, 100) {
+            if !r.is_finite() {
+                continue;
+            }
+            let y = derived.eval(r, params);
+            if !y.is_finite() || y.abs() > 1e-9 {
+                continue;
+            }
+            if zeros.iter().any(|prev: &f64| (*prev - r).abs() < 1e-9) {
+                continue;
+            }
+            zeros.push(r);
+        }
+    }
+    zeros
+}
+
+/// Find local extrema of `expr` in `[x_min, x_max]` as markers.
+///
+/// Zeros of `f'` (via [`differentiate`], always simplified per AD-3) are
+/// classified by the second-derivative test: `f''(r) > 0` emits `LocalMin`,
+/// `f''(r) < 0` emits `LocalMax`, and near-zero (`<= 1e-9`, e.g. `x^3` at
+/// `0`) is skipped rather than guessed. Marker `y` is `f(r)`.
+pub fn find_extrema(
+    expr: &Expr,
+    params: &HashMap<String, f64>,
+    x_min: f64,
+    x_max: f64,
+    steps: usize,
+    tol: f64,
+) -> Vec<Marker> {
+    let fp = differentiate(expr, "x");
+    let fpp = differentiate(&fp, "x");
+    let mut out = Vec::new();
+    for r in refined_derived_zeros(&fp, params, x_min, x_max, steps, tol) {
+        let second = fpp.eval(r, params);
+        if !second.is_finite() || second.abs() <= 1e-9 {
+            continue;
+        }
+        let kind = if second > 0.0 {
+            MarkerKind::LocalMin
+        } else {
+            MarkerKind::LocalMax
+        };
+        let y = expr.eval(r, params);
+        if !y.is_finite() {
+            continue;
+        }
+        out.push(Marker::new(kind, r, y));
+    }
+    out
+}
+
+/// Find inflection points of `expr` in `[x_min, x_max]` as markers.
+///
+/// Zeros of `f''` (derived `differentiate`-then-`simplify` per AD-3) are
+/// kept only on true concavity sign change: `f''` evaluated on both sides
+/// of the refined zero must have strictly opposite finite signs. Flat
+/// points without concavity change never emit.
+pub fn find_inflections(
+    expr: &Expr,
+    params: &HashMap<String, f64>,
+    x_min: f64,
+    x_max: f64,
+    steps: usize,
+    tol: f64,
+) -> Vec<Marker> {
+    let fp = differentiate(expr, "x");
+    let fpp = differentiate(&fp, "x");
+    // Probe offset well above solver `tol` (numerically robust sign read)
+    // and well below feature spacing (sin inflections are π apart).
+    let delta = (tol * 100.0).clamp(1e-7, 1e-4);
+    let mut out = Vec::new();
+    for r in refined_derived_zeros(&fpp, params, x_min, x_max, steps, tol) {
+        let left = fpp.eval(r - delta, params);
+        let right = fpp.eval(r + delta, params);
+        if !left.is_finite() || !right.is_finite() {
+            continue;
+        }
+        if left.abs() > POLE_THRESHOLD || right.abs() > POLE_THRESHOLD {
+            continue;
+        }
+        if left * right >= 0.0 {
+            continue;
+        }
+        let y = expr.eval(r, params);
+        if !y.is_finite() {
+            continue;
+        }
+        out.push(Marker::new(MarkerKind::Inflection, r, y));
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -396,5 +505,134 @@ mod tests {
                 "pole marker near {pole}: {markers:?}"
             );
         }
+    }
+
+    #[test]
+    fn finds_cubic_extrema_with_marker_data() {
+        // f(x) = x^3 - 3x → LocalMax at x=-1 (y=2), LocalMin at x=+1 (y=-2).
+        let expr = parse("x^3-3*x").unwrap();
+        let params = HashMap::new();
+        let markers = find_extrema(&expr, &params, -3.0, 3.0, 200, 1e-12);
+        assert_eq!(markers.len(), 2, "markers: {markers:?}");
+        let max = markers
+            .iter()
+            .find(|m| m.kind == MarkerKind::LocalMax)
+            .expect("missing LocalMax");
+        let min = markers
+            .iter()
+            .find(|m| m.kind == MarkerKind::LocalMin)
+            .expect("missing LocalMin");
+        assert!((max.x + 1.0).abs() < 1e-12, "max x: got {}", max.x);
+        assert!((min.x - 1.0).abs() < 1e-12, "min x: got {}", min.x);
+        for m in [&max, &min] {
+            let want_y = m.x.powi(3) - 3.0 * m.x;
+            assert!(
+                (m.y - want_y).abs() < 1e-12,
+                "y at {}: got {} want {want_y}",
+                m.x,
+                m.y
+            );
+        }
+        assert!((max.y - 2.0).abs() < 1e-12, "max y: got {}", max.y);
+        assert!((min.y + 2.0).abs() < 1e-12, "min y: got {}", min.y);
+    }
+
+    #[test]
+    fn finds_sin_extrema_alternating() {
+        // sin(x) on [-7, 7] → extrema at odd multiples of π/2.
+        let expr = parse("sin(x)").unwrap();
+        let params = HashMap::new();
+        let mut markers = find_extrema(&expr, &params, -7.0, 7.0, 400, 1e-12);
+        markers.sort_by(|a, b| a.x.partial_cmp(&b.x).unwrap());
+        let pi = std::f64::consts::PI;
+        let wants = [
+            (-1.5 * pi, MarkerKind::LocalMax),
+            (-0.5 * pi, MarkerKind::LocalMin),
+            (0.5 * pi, MarkerKind::LocalMax),
+            (1.5 * pi, MarkerKind::LocalMin),
+        ];
+        assert_eq!(markers.len(), wants.len(), "markers: {markers:?}");
+        for (m, (want_x, want_kind)) in markers.iter().zip(wants.iter()) {
+            assert!(
+                (m.x - want_x).abs() < 1e-12,
+                "x near {want_x}: got {}",
+                m.x
+            );
+            assert_eq!(m.kind, *want_kind, "kind at {}", m.x);
+            let want_y = want_x.sin();
+            assert!(
+                (m.y - want_y).abs() < 1e-12,
+                "y at {}: got {} want {want_y}",
+                m.x,
+                m.y
+            );
+        }
+        // Kinds must alternate min/max along x (sin extrema alternate).
+        for w in markers.windows(2) {
+            assert_ne!(w[0].kind, w[1].kind, "adjacent kinds: {w:?}");
+        }
+    }
+
+    #[test]
+    fn finds_cubic_inflection() {
+        // f(x) = x^3 - 3x → single inflection at x=0 (y=0).
+        let expr = parse("x^3-3*x").unwrap();
+        let params = HashMap::new();
+        let markers = find_inflections(&expr, &params, -3.0, 3.0, 200, 1e-12);
+        assert_eq!(markers.len(), 1, "markers: {markers:?}");
+        let m = &markers[0];
+        assert_eq!(m.kind, MarkerKind::Inflection);
+        assert!(m.x.abs() < 1e-12, "x: got {}", m.x);
+        assert!(m.y.abs() < 1e-12, "y: got {}", m.y);
+    }
+
+    #[test]
+    fn finds_sin_inflections_at_multiples_of_pi() {
+        // sin(x) on [-7, 7] → inflections at -2π, -π, 0, π, 2π.
+        let expr = parse("sin(x)").unwrap();
+        let params = HashMap::new();
+        let markers = find_inflections(&expr, &params, -7.0, 7.0, 400, 1e-12);
+        let pi = std::f64::consts::PI;
+        assert_eq!(markers.len(), 5, "markers: {markers:?}");
+        for want in [-2.0 * pi, -pi, 0.0, pi, 2.0 * pi] {
+            let m = markers
+                .iter()
+                .min_by(|a, b| {
+                    (a.x - want)
+                        .abs()
+                        .partial_cmp(&(b.x - want).abs())
+                        .unwrap()
+                })
+                .unwrap();
+            assert!(
+                (m.x - want).abs() < 1e-12,
+                "inflection near {want}: got {}",
+                m.x
+            );
+            assert_eq!(m.kind, MarkerKind::Inflection);
+            assert!(
+                (m.y - want.sin()).abs() < 1e-12,
+                "y at {}: got {}",
+                m.x,
+                m.y
+            );
+        }
+    }
+
+    #[test]
+    fn monotonic_function_has_no_extrema() {
+        // f(x) = x^3 + 2x → f' = 3x^2 + 2 > 0 everywhere.
+        let expr = parse("x^3+2*x").unwrap();
+        let params = HashMap::new();
+        assert!(find_extrema(&expr, &params, -3.0, 3.0, 200, 1e-12).is_empty());
+    }
+
+    #[test]
+    fn pole_adjacent_derivatives_emit_no_markers() {
+        // 1/x → f' = -1/x^2 never zero, f'' = 2/x^3 never zero.
+        let expr = parse("1/x").unwrap();
+        let params = HashMap::new();
+        assert!(find_extrema(&expr, &params, -1.0, 1.0, 100, 1e-12).is_empty());
+        assert!(find_inflections(&expr, &params, -1.0, 1.0, 100, 1e-12).is_empty());
     }
 }
