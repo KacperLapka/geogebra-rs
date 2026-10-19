@@ -1,0 +1,7 @@
+---
+description: 'Runs the evals of a BMad skill through the agent harness the user works in and reports what they show: baseline against the bare model, variant against a stripped or prior version, quality against a rubric, and trigger accuracy of the description with an optional optimization loop. Use when the user asks to evaluate, benchmark, test the triggers of, grade, or compare versions of a skill, or when the bmad-toolsmith skill asks for an eval of a skill it built.'
+---
+
+Load the skill `bmad-eval` (mention `@skills/bmad-eval`) via the `skill` tool and follow its workflow exactly. Do not guess the workflow from memory.
+
+$ARGUMENTS

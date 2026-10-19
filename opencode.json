@@ -1,0 +1,25 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "permissions": [
+    {
+      "action": "skill",
+      "resource": "bmad-*",
+      "effect": "allow"
+    },
+    {
+      "action": "skill",
+      "resource": "bmod-*",
+      "effect": "allow"
+    },
+    {
+      "action": "shell",
+      "resource": "uv run *",
+      "effect": "allow"
+    },
+    {
+      "action": "subagent",
+      "resource": "bmad-*",
+      "effect": "allow"
+    }
+  ]
+}
