@@ -8,7 +8,7 @@
 
 use std::collections::HashMap;
 
-use core_math::Expr;
+use core_math::{tangent_coeffs, Expr};
 
 use crate::viewport::Viewport;
 
@@ -352,6 +352,55 @@ pub fn sample_points_f32(
         .collect()
 }
 
+/// Viewport-spanning tangent segment for the calculus overlay (R4).
+///
+/// Returns the endpoints of `y = y0 + slope * (x - x0)` at the viewport x
+/// edges, where `(y0, slope)` comes from [`tangent_coeffs`]. `None` on
+/// non-finite `x0`/`y0`/slope or a degenerate viewport — the caller then
+/// emits `tangent: null` and leaves curve + markers untouched.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct TangentSegment {
+    pub x0: f64,
+    pub y0: f64,
+    pub slope: f64,
+    pub from: [f64; 2],
+    pub to: [f64; 2],
+}
+
+/// Compute the viewport-spanning tangent segment, or `None` when the tangent
+/// is undefined here.
+#[allow(clippy::neg_cmp_op_on_partial_ord)]
+pub fn tangent_segment(
+    expr: &Expr,
+    params: &HashMap<String, f64>,
+    x0: f64,
+    viewport: &Viewport,
+) -> Option<TangentSegment> {
+    if !x0.is_finite() {
+        return None;
+    }
+    let width = viewport.width();
+    if !(width > 0.0) || !width.is_finite() {
+        return None;
+    }
+    let (y0, slope) = tangent_coeffs(expr, params, x0);
+    if !y0.is_finite() || !slope.is_finite() {
+        return None;
+    }
+    let from = [viewport.x_min, y0 + slope * (viewport.x_min - x0)];
+    let to = [viewport.x_max, y0 + slope * (viewport.x_max - x0)];
+    if !from[1].is_finite() || !to[1].is_finite() {
+        return None;
+    }
+    Some(TangentSegment {
+        x0,
+        y0,
+        slope,
+        from,
+        to,
+    })
+}
+
 fn valid(y: f64) -> bool {
     y.is_finite()
 }
@@ -668,5 +717,35 @@ mod tests {
     fn ribbon_vertex_is_44_bytes() {
         assert_eq!(std::mem::size_of::<CurveVertex>(), CURVE_VERTEX_STRIDE);
         assert_eq!(CURVE_VERTEX_STRIDE, 44);
+    }
+
+    #[test]
+    fn tangent_segment_lies_on_the_line() {
+        let expr = parse("x^2").unwrap();
+        let vp = Viewport::new(-10.0, 10.0, -10.0, 10.0);
+        let seg = tangent_segment(&expr, &HashMap::new(), 1.0, &vp).unwrap();
+        assert!((seg.y0 - 1.0).abs() < 1e-12);
+        assert!((seg.slope - 2.0).abs() < 1e-12);
+        // Endpoints satisfy y = 1 + 2(x - 1) within 1e-12.
+        for [x, y] in [seg.from, seg.to] {
+            let want = 1.0 + 2.0 * (x - 1.0);
+            assert!((y - want).abs() < 1e-12, "x={x}: got {y} want {want}");
+        }
+        assert_eq!(seg.from[0], -10.0);
+        assert_eq!(seg.to[0], 10.0);
+    }
+
+    #[test]
+    fn tangent_segment_rejects_bad_input() {
+        let expr = parse("x^2").unwrap();
+        let vp = Viewport::new(-10.0, 10.0, -10.0, 10.0);
+        assert!(tangent_segment(&expr, &HashMap::new(), f64::NAN, &vp).is_none());
+        assert!(tangent_segment(&expr, &HashMap::new(), f64::INFINITY, &vp).is_none());
+        // Degenerate viewport: no span to draw.
+        let flat = Viewport::new(2.0, 2.0, -10.0, 10.0);
+        assert!(tangent_segment(&expr, &HashMap::new(), 1.0, &flat).is_none());
+        // Non-finite y0 (pole at x0): tangent undefined here.
+        let recip = parse("1/x").unwrap();
+        assert!(tangent_segment(&recip, &HashMap::new(), 0.0, &vp).is_none());
     }
 }

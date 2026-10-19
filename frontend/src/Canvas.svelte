@@ -2,7 +2,9 @@
   // Multi-curve canvas (4.3): `curves` is a list of `{id, points, style}`
   // with per-curve `{color, widthPx, dashed, visible}`. Legacy single-curve
   // `points`/`style` props still work: they render as one curve.
-  let { curves, points, viewport, grid, hover, style, onViewport, onHover, onLeave, onSize, onFps, children } = $props();
+  // Calculus overlays (2.6): `markers` is `[{kind, x, y}]` and `tangent` is
+  // `{from, to}` in math coords, stroked verbatim from Rust (AD-4).
+  let { curves, points, viewport, grid, hover, style, markers, tangent, onViewport, onHover, onLeave, onSize, onFps, children } = $props();
 
   let canvas = $state(null);
   let ctx = $state(null);
@@ -99,6 +101,37 @@
     }
     ctx.setLineDash([]);
     ctx.lineDashOffset = 0;
+
+    // tangent segment (2.6): Rust-computed math coords stroked verbatim.
+    if (tangent && Array.isArray(tangent.from) && Array.isArray(tangent.to)) {
+      const [ax, ay] = toScreen(tangent.from[0], tangent.from[1], w, h);
+      const [bx, by] = toScreen(tangent.to[0], tangent.to[1], w, h);
+      if ([ax, ay, bx, by].every(Number.isFinite)) {
+        ctx.strokeStyle = '#ea580c';
+        ctx.lineWidth = 2;
+        ctx.setLineDash([]);
+        ctx.lineDashOffset = 0;
+        ctx.beginPath();
+        ctx.moveTo(ax, ay);
+        ctx.lineTo(bx, by);
+        ctx.stroke();
+      }
+    }
+
+    // marker circles (2.6): per-kind fill, white ring for contrast.
+    const MARKER_COLORS = { root: '#dc2626', min: '#16a34a', max: '#d97706', inflection: '#9333ea' };
+    for (const m of markers ?? []) {
+      if (!m || !Number.isFinite(m.x) || !Number.isFinite(m.y)) continue;
+      const [mx, my] = toScreen(m.x, m.y, w, h);
+      if (!Number.isFinite(mx) || !Number.isFinite(my)) continue;
+      ctx.fillStyle = MARKER_COLORS[m.kind] ?? '#dc2626';
+      ctx.strokeStyle = '#ffffff';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.arc(mx, my, 5, 0, 2 * Math.PI);
+      ctx.fill();
+      ctx.stroke();
+    }
 
     // hover marker
     if (hover && hover.math_y !== null && hover.math_y !== undefined) {
@@ -202,6 +235,8 @@
     void grid;
     void hover;
     void style;
+    void markers;
+    void tangent;
     dirty = true;
   });
 </script>

@@ -295,7 +295,9 @@ export function createFallback() {
             return [x, guard(evaluate(fn.node, x, params))];
           })
         : [];
-      return { points, params: [...state.params.keys()] };
+      // Shape parity with the Rust `sample_points` (2.6): curve only, empty
+      // overlays, so the dev loop never crashes without the bundle.
+      return { points, params: [...state.params.keys()], markers: [], tangent: null };
     },
     samplePointsFor(id, n) {
       const fn = state.functions.get(id);

@@ -10,3 +10,6 @@
 - source_plan: `/home/kacper/Development/rs/geogebra-rs/_bmad-output/initiative-geogebra-rs/tickets/epic-workspace-persistence/tickets/story-tracer-bullet-share-link-restores-identical-session-plan.md`
   summary: Decide slug-load precedence over seeded DEMO_CURVES and clear extras on restore.
   evidence: onMount seeds DEMO_CURVES g/h while restoreFromSlug only adds functions, so a stored single-function session restores with extra curves; needs the 4.3 palette owner's decision plus a function-removal path.
+- source_plan: `/home/kacper/Development/rs/geogebra-rs/_bmad-output/initiative-geogebra-rs/tickets/epic-symbolic-calculus/tickets/story-tangent-and-marker-render-integration-plan.md`
+  summary: Manual browser proof for 2.6 tangent/marker overlays at 60 FPS.
+  evidence: cargo (49+41+31) and npm (32) cover all 7 matrix rows, but `f(x)=x^2` x0-drag with min marker and `f=x^2-1` root hover were never run in a linked `wasm-pack` + `npm run dev` browser.

@@ -20,6 +20,11 @@
   let formula = $state('a*x^2');
   let error = $state(null);
   let params = $state({});
+  // Tangent point `x0`: ordinary session param for the Rust overlay path,
+  // never a generic slider (filtered out below so it renders once).
+  let x0 = $state(1.0);
+  let markers = $state([]);
+  let tangent = $state(null);
   let curves = $state([]);
   let grid = $state({ x: [], y: [] });
   let viewport = $state({ x_min: -10, x_max: 10, y_min: -10, y_max: 10 });
@@ -65,9 +70,26 @@
       points: backend.samplePointsFor(id, 240).points,
       style: nextStyles[id] ?? { ...FALLBACK_STYLE }
     }));
+    // Calculus overlays from the Rust `sample_points` (2.6, additive-only):
+    // viewport-scoped markers + the `x0` tangent segment. Stale bundles
+    // without the fields read as empty overlays, never a crash.
+    try {
+      const overlay = backend.samplePoints(240);
+      markers = overlay.markers ?? [];
+      tangent = overlay.tangent ?? null;
+    } catch {
+      markers = [];
+      tangent = null;
+    }
     const known = {};
-    for (const name of Object.keys(ws.params ?? {})) known[name] = params[name] ?? ws.params[name] ?? 1;
+    for (const name of Object.keys(ws.params ?? {})) {
+      // `x0` has its dedicated slider below; never a generic slider.
+      if (name === 'x0') continue;
+      known[name] = params[name] ?? ws.params[name] ?? 1;
+    }
     params = known;
+    // Keep the dedicated slider in sync when `x0` arrives via restore/share.
+    if (Number.isFinite(ws.params?.x0)) x0 = ws.params.x0;
   }
 
   // Share/load tracer (5.1): Share button + panel + /w/<slug> and ?s=<slug>.
@@ -92,8 +114,9 @@
     if (res.ok) {
       error = null;
       const next = { ...params };
-      for (const name of res.params) if (!(name in next)) next[name] = 1;
-      for (const name of Object.keys(next)) if (!res.params.includes(name)) delete next[name];
+      // `x0` keeps its dedicated slider even if a formula names it.
+      for (const name of res.params) if (name !== 'x0' && !(name in next)) next[name] = 1;
+      for (const name of Object.keys(next)) if (name !== 'x0' && !res.params.includes(name)) delete next[name];
       params = next;
     } else {
       error = { message: res.message, span: res.span };
@@ -107,6 +130,15 @@
     if (!Number.isFinite(value)) return;
     backend.updateParam(name, value);
     params = { ...params, [name]: value };
+    refresh();
+  }
+
+  function handleX0(value) {
+    // Tangent-point path (2.6): same-frame `updateParam("x0")` + resample
+    // as the generic sliders, so the tangent follows the drag.
+    if (!Number.isFinite(value)) return;
+    backend.updateParam('x0', value);
+    x0 = value;
     refresh();
   }
 
@@ -224,7 +256,9 @@
       return;
     }
     if (typeof doc.functions?.f === 'string') formula = doc.functions.f;
-    params = { ...doc.params };
+    // `x0` restores to its dedicated slider, never the generic list.
+    if (Number.isFinite(doc.params?.x0)) x0 = doc.params.x0;
+    params = Object.fromEntries(Object.entries(doc.params ?? {}).filter(([k]) => k !== 'x0'));
     viewport = { ...doc.viewport };
     error = null;
     loadNote = '';
@@ -234,6 +268,9 @@
   onMount(async () => {
     backend = await getBackend();
     backend.setCanvasSize(800, 420);
+    // Seed the tangent point so the 2.6 overlay draws on first paint;
+    // missing `x0` would otherwise render `tangent: null` until first drag.
+    backend.updateParam('x0', x0);
     // Shared link view: primary /w/<slug>, fallback ?s=<slug>.
     const slug = slugFromLocation(window.location);
     if (slug) {
@@ -343,6 +380,8 @@
     {viewport}
     {grid}
     {hover}
+    {markers}
+    {tangent}
     onViewport={handleViewport}
     onHover={handleHover}
     onLeave={() => (hover = null)}
@@ -366,6 +405,30 @@
   {/each}
 
   <Sliders {params} onParam={handleParam} />
+
+  <div class="sliders x0-slider">
+    <div class="slider-row">
+      <label for="slider-x0"><code>x0 = {Number(x0).toFixed(2)}</code></label>
+      <input
+        id="slider-x0"
+        type="range"
+        min={viewport.x_min}
+        max={viewport.x_max}
+        step={(viewport.x_max - viewport.x_min) / 400 || 0.01}
+        value={x0}
+        aria-label="x0 slider"
+        title="x0 = {x0}"
+        oninput={(e) => handleX0(parseFloat(e.target.value))}
+      />
+      <input
+        type="number"
+        step="0.1"
+        value={x0}
+        aria-label="x0 value"
+        oninput={(e) => handleX0(parseFloat(e.target.value))}
+      />
+    </div>
+  </div>
 
   {#if workspace}
     <!-- Workspace JSON owned shape for Epic 5: {version:1, functions, params, viewport, style}.

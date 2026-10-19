@@ -16,10 +16,10 @@
 use std::collections::HashMap;
 use std::sync::{Mutex, OnceLock};
 
-use core_math::{Expr, Span, parse};
+use core_math::{find_extrema, find_inflections, find_roots, parse, Expr, MarkerKind, Span};
 use render::{
-    FunctionStyle, GpuStatus, POLE_BREAK, Viewport, clamp_width, default_style, for_function_index,
-    grid_ticks, hex_to_linear, sample_curve,
+    clamp_width, default_style, for_function_index, grid_ticks, hex_to_linear, sample_curve,
+    tangent_segment, FunctionStyle, GpuStatus, Viewport, POLE_BREAK,
 };
 use serde::{Deserialize, Serialize};
 use wasm_bindgen::prelude::*;
@@ -109,6 +109,102 @@ pub struct HoverResult {
     pub math_y: Option<f64>,
     /// Marker id at the hovered point; `None` until calculus markers land.
     pub marker: Option<String>,
+}
+
+/// Calculus marker overlay for `sample_points` (2.6, additive-only).
+///
+/// `kind` is one of `root|min|max|inflection`; `x`/`y` are math coords.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct MarkerDto {
+    pub kind: String,
+    pub x: f64,
+    pub y: f64,
+}
+
+/// Tangent overlay for `sample_points` (2.6, additive-only).
+///
+/// `from`/`to` are viewport-spanning segment endpoints on
+/// `y = y0 + slope * (x - x0)`; `null` when `x0` is missing/non-finite.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct TangentDto {
+    pub x0: f64,
+    pub y0: f64,
+    pub slope: f64,
+    pub from: [f64; 2],
+    pub to: [f64; 2],
+}
+
+fn marker_kind_str(kind: MarkerKind) -> &'static str {
+    match kind {
+        MarkerKind::Root => "root",
+        MarkerKind::LocalMin => "min",
+        MarkerKind::LocalMax => "max",
+        MarkerKind::Inflection => "inflection",
+    }
+}
+
+/// Display id for a marker: kind plus coords at 3 decimals, shown verbatim
+/// in the tooltip suffix (e.g. `root (1.000, 0.000)`).
+fn marker_id(kind: &str, x: f64, y: f64) -> String {
+    format!("{kind} ({x:.3}, {y:.3})")
+}
+
+/// Viewport-scoped markers via the solver pipeline (~200 scan steps to
+/// protect the frame budget). Pole jumps never emit (AD-3); `1/x` yields no
+/// markers.
+fn collect_markers(
+    expr: &Expr,
+    params: &HashMap<String, f64>,
+    viewport: &Viewport,
+) -> Vec<MarkerDto> {
+    const STEPS: usize = 200;
+    const TOL: f64 = 1e-12;
+    let mut out = Vec::new();
+    for m in find_roots(expr, params, viewport.x_min, viewport.x_max, STEPS, TOL) {
+        out.push(MarkerDto {
+            kind: marker_kind_str(m.kind).to_string(),
+            x: m.x,
+            y: m.y,
+        });
+    }
+    for m in find_extrema(expr, params, viewport.x_min, viewport.x_max, STEPS, TOL) {
+        out.push(MarkerDto {
+            kind: marker_kind_str(m.kind).to_string(),
+            x: m.x,
+            y: m.y,
+        });
+    }
+    for m in find_inflections(expr, params, viewport.x_min, viewport.x_max, STEPS, TOL) {
+        out.push(MarkerDto {
+            kind: marker_kind_str(m.kind).to_string(),
+            x: m.x,
+            y: m.y,
+        });
+    }
+    out.retain(|d| d.x.is_finite() && d.y.is_finite());
+    out
+}
+
+/// Tangent overlay from the ordinary `x0` session param. Missing/non-finite
+/// `x0` (or a non-finite tangent) yields `None` so the caller emits
+/// `tangent: null` with curve + markers untouched.
+fn tangent_for(
+    expr: &Expr,
+    params: &HashMap<String, f64>,
+    viewport: &Viewport,
+) -> Option<TangentDto> {
+    let x0 = *params.get("x0")?;
+    if !x0.is_finite() {
+        return None;
+    }
+    let seg = tangent_segment(expr, params, x0, viewport)?;
+    Some(TangentDto {
+        x0: seg.x0,
+        y0: seg.y0,
+        slope: seg.slope,
+        from: seg.from,
+        to: seg.to,
+    })
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -454,8 +550,11 @@ pub fn set_canvas_size(w: f64, h: f64) {
 /// tooltip shows a gap marker instead of a spike value. Degenerate canvas
 /// sizes or non-finite pixels yield `math_x: NaN` with `math_y: None`.
 ///
-/// Svelte never performs this transform itself; it calls [`query_hover`] and
-/// displays the returned coordinates verbatim.
+/// When the pixel lands within ~12px of a calculus marker (viewport-scoped
+/// roots/extrema/inflections), `marker` names it (`kind (x, y)` at 3
+/// decimals) and the coords snap to the marker. Svelte never performs this
+/// transform itself; it calls [`query_hover`] and displays the returned
+/// coordinates verbatim.
 ///
 /// Negated comparisons below are deliberate NaN-safe ordering: non-finite
 /// canvas sizes and pixels must take the degenerate path.
@@ -486,6 +585,31 @@ fn query_hover_core(
     let math_y = expr
         .map(|e| e.eval(math_x, params))
         .filter(|y| y.is_finite() && y.abs() <= POLE_BREAK);
+    // Nearest-marker snap within ~12px (viewport-only, pole jumps excluded
+    // by the solver). Snapped coords equal the marker within 1e-12.
+    if let Some(e) = expr {
+        let markers = collect_markers(e, params, viewport);
+        let mut best: Option<(&MarkerDto, f64)> = None;
+        for m in &markers {
+            let (mx, my) = viewport.world_to_screen(m.x, m.y, canvas_w, canvas_h);
+            if !mx.is_finite() || !my.is_finite() {
+                continue;
+            }
+            let dx = mx - px_x;
+            let dy = my - px_y;
+            let dist = (dx * dx + dy * dy).sqrt();
+            if dist <= 12.0 && best.map(|(_, d)| dist < d).unwrap_or(true) {
+                best = Some((m, dist));
+            }
+        }
+        if let Some((m, _)) = best {
+            return HoverResult {
+                math_x: m.x,
+                math_y: Some(m.y),
+                marker: Some(marker_id(&m.kind, m.x, m.y)),
+            };
+        }
+    }
     HoverResult {
         math_x,
         math_y,
@@ -512,13 +636,20 @@ pub fn query_hover(px_x: f64, px_y: f64) -> String {
 
 /// Tracer helper: sample the active function across the viewport.
 ///
-/// Returns `{"points":[[x,y|null],...],"params":[...]}`. Superseded by the
-/// wgpu vertex-buffer path in stories 1.2/1.4.
+/// Returns `{"points":[[x,y|null],...],"params":[...],"markers":[{kind,x,y},...],
+/// "tangent":{x0,y0,slope,from,to}|null}`. `markers`/`tangent` are additive:
+/// existing `points`/`params` fields are byte-identical. Superseded by the
+/// wgpu vertex-buffer path in stories 1.2/1.4 for curves, but the overlay
+/// fields feed the live 2D canvas.
 #[wasm_bindgen]
 pub fn sample_points(n: usize) -> String {
     let s = session().lock().unwrap();
-    let points: Vec<(f64, Option<f64>)> = match active_expr(&s) {
-        Some(expr) if active_visible(&s) => {
+    let expr = active_expr(&s);
+    let visible = active_visible(&s);
+    let params_map = s.params.clone();
+    let viewport = s.viewport;
+    let points: Vec<(f64, Option<f64>)> = match expr.clone() {
+        Some(expr) if visible => {
             let n = n.clamp(2, 4000);
             sample_curve(&expr, &s.params, &s.viewport, n)
                 .into_iter()
@@ -527,8 +658,21 @@ pub fn sample_points(n: usize) -> String {
         }
         Some(_) | None => Vec::new(),
     };
+    let (markers, tangent): (Vec<MarkerDto>, Option<TangentDto>) = match expr.as_ref() {
+        Some(e) if visible => (
+            collect_markers(e, &params_map, &viewport),
+            tangent_for(e, &params_map, &viewport),
+        ),
+        _ => (Vec::new(), None),
+    };
     let params: Vec<String> = s.params.keys().cloned().collect();
-    serde_json::to_string(&serde_json::json!({ "points": points, "params": params })).unwrap()
+    serde_json::to_string(&serde_json::json!({
+        "points": points,
+        "params": params,
+        "markers": markers,
+        "tangent": tangent,
+    }))
+    .unwrap()
 }
 
 /// Per-id sampler (4.3, additive): sample one function by id with its own
@@ -1081,5 +1225,120 @@ mod tests {
         }
         let again: Workspace = parse_json(&serialize_workspace());
         assert_eq!(styled, again);
+    }
+
+    #[test]
+    fn hover_near_root_snaps_to_marker() {
+        let _guard = test_lock().lock().unwrap();
+        reset_session();
+        let _: ParseOk = parse_json(&set_function("f", "x^2-1"));
+        set_canvas_size(800.0, 600.0);
+        update_viewport(-10.0, 10.0, -10.0, 10.0);
+        // Root at (1, 0) maps to pixel (440, 300) on this canvas.
+        let hover: HoverResult = parse_json(&query_hover(440.0, 300.0));
+        let marker = hover.marker.expect("expected root marker");
+        assert!(marker.contains("root"), "marker: {marker}");
+        assert!((hover.math_x - 1.0).abs() < 1e-12, "x: {}", hover.math_x);
+        assert!(
+            (hover.math_y.unwrap() - 0.0).abs() < 1e-12,
+            "y: {:?}",
+            hover.math_y
+        );
+    }
+
+    #[test]
+    fn hover_far_from_markers_returns_coords_only() {
+        let _guard = test_lock().lock().unwrap();
+        reset_session();
+        let _: ParseOk = parse_json(&set_function("f", "x^2-1"));
+        set_canvas_size(800.0, 600.0);
+        update_viewport(-10.0, 10.0, -10.0, 10.0);
+        // Mid-gap at x=0: 40px from either root, outside the 12px snap.
+        let hover: HoverResult = parse_json(&query_hover(400.0, 300.0));
+        assert_eq!(hover.marker, None);
+        assert!((hover.math_x - 0.0).abs() < 1e-9);
+        assert!((hover.math_y.unwrap() + 1.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn samples_carry_max_min_inflection_markers() {
+        let _guard = test_lock().lock().unwrap();
+        reset_session();
+        let _: ParseOk = parse_json(&set_function("f", "x^3-3*x"));
+        update_viewport(-3.0, 3.0, -3.0, 3.0);
+        let sample: serde_json::Value = parse_json(&sample_points(240));
+        let markers = sample["markers"].as_array().unwrap();
+        let find = |kind: &str| {
+            markers
+                .iter()
+                .find(|m| m["kind"] == kind)
+                .unwrap_or_else(|| panic!("missing {kind}: {markers:?}"))
+                .clone()
+        };
+        let max = find("max");
+        let min = find("min");
+        let infl = find("inflection");
+        assert!((max["x"].as_f64().unwrap() + 1.0).abs() < 1e-12);
+        assert!((max["y"].as_f64().unwrap() - 2.0).abs() < 1e-12);
+        assert!((min["x"].as_f64().unwrap() - 1.0).abs() < 1e-12);
+        assert!((min["y"].as_f64().unwrap() + 2.0).abs() < 1e-12);
+        assert!(infl["x"].as_f64().unwrap().abs() < 1e-12);
+        assert!(infl["y"].as_f64().unwrap().abs() < 1e-12);
+    }
+
+    #[test]
+    fn samples_carry_tangent_on_the_line() {
+        let _guard = test_lock().lock().unwrap();
+        reset_session();
+        let _: ParseOk = parse_json(&set_function("f", "x^2"));
+        update_param("x0", 1.0);
+        let sample: serde_json::Value = parse_json(&sample_points(240));
+        let tangent = &sample["tangent"];
+        assert!(tangent.is_object(), "tangent: {tangent}");
+        assert!((tangent["x0"].as_f64().unwrap() - 1.0).abs() < 1e-12);
+        assert!((tangent["y0"].as_f64().unwrap() - 1.0).abs() < 1e-12);
+        assert!((tangent["slope"].as_f64().unwrap() - 2.0).abs() < 1e-12);
+        for end in [tangent["from"].clone(), tangent["to"].clone()] {
+            let x = end[0].as_f64().unwrap();
+            let y = end[1].as_f64().unwrap();
+            let want = 1.0 + 2.0 * (x - 1.0);
+            assert!((y - want).abs() < 1e-12, "x={x}: got {y} want {want}");
+        }
+    }
+
+    #[test]
+    fn missing_x0_leaves_curve_and_markers_untouched() {
+        let _guard = test_lock().lock().unwrap();
+        reset_session();
+        let _: ParseOk = parse_json(&set_function("f", "x^2"));
+        // No `x0` param yet: tangent null, curve + markers unaffected.
+        let sample: serde_json::Value = parse_json(&sample_points(240));
+        assert!(
+            sample["tangent"].is_null(),
+            "tangent: {}",
+            sample["tangent"]
+        );
+        assert!(!sample["points"].as_array().unwrap().is_empty());
+        assert!(!sample["markers"].as_array().unwrap().is_empty());
+        // Non-finite `x0` is rejected by `update_param`: still null.
+        update_param("x0", f64::NAN);
+        let again: serde_json::Value = parse_json(&sample_points(240));
+        assert!(again["tangent"].is_null());
+        assert!(!again["points"].as_array().unwrap().is_empty());
+    }
+
+    #[test]
+    fn pole_form_has_no_markers_but_keeps_tangent() {
+        let _guard = test_lock().lock().unwrap();
+        reset_session();
+        let _: ParseOk = parse_json(&set_function("f", "1/x"));
+        update_viewport(-10.0, 10.0, -10.0, 10.0);
+        update_param("x0", 1.0);
+        let sample: serde_json::Value = parse_json(&sample_points(240));
+        assert!(sample["markers"].as_array().unwrap().is_empty());
+        let tangent = &sample["tangent"];
+        assert!(tangent.is_object(), "tangent: {tangent}");
+        assert!((tangent["y0"].as_f64().unwrap() - 1.0).abs() < 1e-12);
+        assert!((tangent["slope"].as_f64().unwrap() + 1.0).abs() < 1e-12);
     }
 }

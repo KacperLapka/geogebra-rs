@@ -3,14 +3,14 @@ title: 'Tangent and marker render integration (2.6)'
 type: 'feature'
 ticket: '6'
 created: '2026-10-19'
-status: 'in-progress'
+status: 'built'
 baseline_revision: '28799b01692d06f08cc0f8857fcd5003867c3429'
 route: 'full'
 route_source: 'auto'
 risk: 'medium'
-review: ''
-review_source: ''
-lenses_ran: []
+review: 'quick'
+review_source: 'pinned'
+lenses_ran: ['quick']
 review_loop_iteration: 0
 context:
   - /home/kacper/Development/rs/geogebra-rs/_bmad-output/initiative-geogebra-rs/architecture-geogebra-rs/architecture-geogebra-rs.md
@@ -80,6 +80,11 @@ context:
 ## Plan Change Log
 
 ## Review Triage Log
+
+- F1 `wasm_bridge:682-689 sample_points_for` new export — verdict false, rejected. Evidence: `git diff HEAD` for 2.6 worktree adds no `#[wasm_bindgen]` export (only `MarkerDto`/`TangentDto` structs); `sample_points_for` comes from committed 4.3 work (`6e8186c`), allowed by that plan, not this change — 2.6 respects AD-5.
+- F2 `Workspace.style` schema change — verdict false, rejected. Evidence: style map exists in HEAD from 4.3 commit, `git diff HEAD` for 2.6 touches no workspace schema (only additive `markers`/`tangent` in `sample_points`); 2.6 keeps `x0` as ordinary param.
+- F3 manual browser proof unmet (`f(x)=x^2` x0-drag at 60 FPS) — verdict medium, route defer. Evidence: cargo (49+41+31 pass) + npm (32 pass) cover all 7 matrix rows, but the plan task-6 browser drag was never run here; needs human with linked bundle.
+- F4 `App.svelte:68-83` stale-overlay on missing `samplePointsFor` — verdict false, rejected. Evidence: current `wasm.js` guard requires `sample_points_for` and both backends provide it (rust guard + `fallback.js:302`), so line 70 cannot throw; overlay `try` + `?? []` already handles old `{points,params}` shape — no reachable stale path.
 
 ## Design Notes
 
