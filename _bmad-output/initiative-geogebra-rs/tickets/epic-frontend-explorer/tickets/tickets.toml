@@ -132,3 +132,14 @@ covers = ["R5", "R6"]
 after = [2]
 hitl = false
 risk = "high"
+
+[[entry]]
+id = 13
+type = "bug"
+title = "Gap between function toggles and plot"
+description = "Legend toggle row sits detached above the graph canvas with ~24px gap instead of a tight caption row."
+verify = "Analyze e^(0.5x) shows legend 8-12px above canvas as caption-size muted row, toggles still canvas-only."
+covers = ["R10"]
+after = [8]
+hitl = false
+risk = "low"
