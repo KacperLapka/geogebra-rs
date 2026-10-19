@@ -471,33 +471,6 @@
       <div class="place-toggles">
         <StyleControls {toggles} onToggle={handleToggle} />
       </div>
-      <section class="card point-card" aria-label="Point analysis">
-        <p class="eyebrow">POINT ANALYSIS</p>
-        <div class="x-row">
-          <label for="point-x">x</label>
-          <input
-            id="point-x"
-            type="range"
-            min={viewport.x_min}
-            max={viewport.x_max}
-            step="0.1"
-            value={x0}
-            aria-label="Point on curve"
-            oninput={(e) => handleX0(parseFloat(e.target.value))}
-            onchange={(e) => handleX0Commit(parseFloat(e.target.value))}
-          />
-          <span class="x-pill">{format3(x0)}</span>
-        </div>
-        <div class="values">
-          <div class="value-row"><span>Function value</span><span class="mono-value">{live().value}</span></div>
-          <div class="value-row"><span>Instantaneous slope</span><span class="mono-value">{live().slope}</span></div>
-          <div class="value-row"><span>Local behavior</span><span class="behavior {live().behavior}">{live().behavior}</span></div>
-          <div class="value-row"><span>Tangent line</span><span class="mono-value small">{live().line}</span></div>
-        </div>
-        <div class="sr-live" aria-live="polite">
-          At x {format3(announced.x0)}, value {announced.value}, slope {announced.slope}, {announced.behavior}.
-        </div>
-      </section>
       <div class="place-canvas">
       <Canvas
         {curves}
@@ -539,6 +512,34 @@
           <p class="mono placeholder">f′(x) = —</p>
           <p class="body">Move along the curve</p>
         {/if}
+      </section>
+
+      <section class="card point-card" aria-label="Point analysis">
+        <p class="eyebrow">POINT ANALYSIS</p>
+        <div class="x-row">
+          <label for="point-x">x</label>
+          <input
+            id="point-x"
+            type="range"
+            min={viewport.x_min}
+            max={viewport.x_max}
+            step="0.1"
+            value={x0}
+            aria-label="Point on curve"
+            oninput={(e) => handleX0(parseFloat(e.target.value))}
+            onchange={(e) => handleX0Commit(parseFloat(e.target.value))}
+          />
+          <span class="x-pill">{format3(x0)}</span>
+        </div>
+        <div class="values">
+          <div class="value-row"><span>Function value</span><span class="mono-value">{live().value}</span></div>
+          <div class="value-row"><span>Instantaneous slope</span><span class="mono-value">{live().slope}</span></div>
+          <div class="value-row"><span>Local behavior</span><span class="behavior {live().behavior}">{live().behavior}</span></div>
+          <div class="value-row"><span>Tangent line</span><span class="mono-value small">{live().line}</span></div>
+        </div>
+        <div class="sr-live" aria-live="polite">
+          At x {format3(announced.x0)}, value {announced.value}, slope {announced.slope}, {announced.behavior}.
+        </div>
       </section>
 
       {#if hasAnalyzed}
@@ -622,36 +623,29 @@
     display: grid;
     grid-template-columns: 2fr 1fr;
     column-gap: 24px;
-    row-gap: 8px;
     margin-top: 16px;
+    align-items: start;
   }
-  /* DOM order (toggles → point → markers → share) is the tab order;
-     display:contents + explicit placement preserves the layout.png visual
-     (legend + canvas left, derivative + point + share right). */
-  .graph-col,
-  .rail {
-    display: contents;
-  }
-  .place-toggles {
-    grid-column: 1;
-    grid-row: 1;
-  }
-  .place-canvas {
-    grid-column: 1;
-    grid-row: 2;
+  /* Independent columns: left stacks legend over canvas with a tight 8px
+     gap, right stacks derivative over point over share with 16px rhythm.
+     A shared grid row would force the short legend to the tall
+     derivative card's height and reopen the gap below the toggles. */
+  .graph-col {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
     min-width: 0;
   }
-  .deriv-card {
-    grid-column: 2;
-    grid-row: 1;
+  .rail {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
   }
-  .point-card {
-    grid-column: 2;
-    grid-row: 2;
+  .place-toggles {
+    min-width: 0;
   }
-  .share-row {
-    grid-column: 2;
-    grid-row: 3;
+  .place-canvas {
+    min-width: 0;
   }
   .card {
     background: #ffffff;
