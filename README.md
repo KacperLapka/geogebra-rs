@@ -1,3 +1,10 @@
+# ⚠️ Vibe-coded prototype / tech demo only
+
+> This repository is **vibe-coded**: written fast with AI assistance as a
+> **prototype and tech demo**. It is **not production code** — expect rough
+> edges, missing tests, and unfinished parts. Do not use it for anything
+> beyond experimentation and demonstration.
+
 # Techstack:
 ## Backend:
  - Rust axum
