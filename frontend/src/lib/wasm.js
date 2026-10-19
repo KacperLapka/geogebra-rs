@@ -24,7 +24,21 @@ function wrapRust(pkg) {
     queryHover: (px, py) => JSON.parse(pkg.query_hover(px, py)),
     samplePoints: (n) => JSON.parse(pkg.sample_points(n)),
     samplePointsFor: (id, n) => JSON.parse(pkg.sample_points_for(id, n)),
-    gridLines: () => JSON.parse(pkg.grid_lines()),
+    gridLines: () => {
+      // Additive grid state from Rust: majors stay `{x, y}`; minors, labels,
+      // and steps ride along. Defaults keep stale bundles (x/y only) working.
+      const raw = JSON.parse(pkg.grid_lines());
+      return {
+        x: raw.x ?? [],
+        y: raw.y ?? [],
+        x_minor: raw.x_minor ?? [],
+        y_minor: raw.y_minor ?? [],
+        x_labels: raw.x_labels ?? [],
+        y_labels: raw.y_labels ?? [],
+        step_x: raw.step_x ?? 0,
+        step_y: raw.step_y ?? 0
+      };
+    },
     serializeWorkspace: () => JSON.parse(pkg.serialize_workspace()),
     gpuStatus: () => JSON.parse(pkg.gpu_status())
   };

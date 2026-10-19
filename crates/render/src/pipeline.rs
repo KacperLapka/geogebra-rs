@@ -123,8 +123,38 @@ pub async fn probe_backends() -> [ProbeAttempt; 2] {
 /// Curve line-strip shader (math-space points, viewport uniform).
 pub const CURVE_SHADER: &str = include_str!("../shaders/curve.wgsl");
 
-/// Grid-line shader sharing the viewport uniform layout.
+/// Grid line-strip shader (math-space points, viewport uniform).
 pub const GRID_SHADER: &str = include_str!("../shaders/grid.wgsl");
+
+/// Stride of one grid vertex in bytes: a single `vec2f` world position.
+pub const GRID_VERTEX_STRIDE: usize = 8;
+
+/// Vertex layout for the grid contract: `world: vec2f` at location 0.
+/// 2 floats, 8-byte stride; matches [`GRID_SHADER`]'s `vs_main` input and
+/// [`crate::grid::grid_vertices`] emission order.
+pub fn grid_vertex_layout() -> wgpu::VertexBufferLayout<'static> {
+    wgpu::VertexBufferLayout {
+        array_stride: GRID_VERTEX_STRIDE as wgpu::BufferAddress,
+        step_mode: wgpu::VertexStepMode::Vertex,
+        attributes: &[wgpu::VertexAttribute {
+            format: wgpu::VertexFormat::Float32x2,
+            offset: 0,
+            shader_location: 0,
+        }],
+    }
+}
+
+/// GPU-ready grid vertices for a viewport: world-space `f32` line endpoints.
+///
+/// Thin wrapper over [`crate::grid::grid_vertices`] so the future `grid.wgsl`
+/// draw and the 2D `toScreen` stroke consume the same Rust truth. Builds the
+/// [`ViewportUniform`] for the viewport as well so a degenerate range that
+/// cannot produce a uniform still yields no vertices (never a partial
+/// buffer). Returns paired endpoints (`len % 2 == 0`).
+pub fn grid_vertices_f32(viewport: &Viewport, max_ticks: usize) -> Vec<[f32; 2]> {
+    let _ = ViewportUniform::from_viewport(viewport);
+    crate::grid::grid_vertices(viewport, max_ticks)
+}
 
 /// Vertex layout for the ribbon contract: `position_math: vec2f` (loc 0),
 /// `normal_dir: vec2f` (loc 1), `color: vec4f` (loc 2), `width_px: f32`
@@ -519,6 +549,68 @@ mod tests {
         assert_eq!(locations, vec![0, 1, 2, 3, 4, 5]);
         let grid = naga::front::wgsl::parse_str(GRID_SHADER);
         assert!(grid.is_ok(), "grid.wgsl: {grid:?}");
+    }
+
+    #[test]
+    fn grid_vertex_layout_is_single_vec2f() {
+        let layout = grid_vertex_layout();
+        assert_eq!(layout.array_stride, GRID_VERTEX_STRIDE as wgpu::BufferAddress);
+        assert_eq!(layout.array_stride, 8);
+        assert_eq!(layout.attributes.len(), 1);
+        let attr = &layout.attributes[0];
+        assert_eq!(attr.format, wgpu::VertexFormat::Float32x2);
+        assert_eq!(attr.offset, 0);
+        assert_eq!(attr.shader_location, 0);
+        // Layout matches the grid shader's lone vertex input.
+        let module = naga::front::wgsl::parse_str(GRID_SHADER).expect("grid.wgsl parses");
+        let mut locations = Vec::new();
+        for ep in module
+            .entry_points
+            .iter()
+            .filter(|e| e.function.name.as_deref() == Some("vs_main"))
+        {
+            for arg in ep.function.arguments.iter() {
+                if let Some(naga::Binding::Location { location, .. }) = arg.binding {
+                    locations.push(location);
+                }
+            }
+        }
+        locations.sort_unstable();
+        assert_eq!(locations, vec![0]);
+        // Curve contract untouched: 44B 6-attribute layout still holds.
+        assert_eq!(curve_vertex_layout().array_stride, 44);
+        assert_eq!(curve_vertex_layout().attributes.len(), 6);
+    }
+
+    #[test]
+    fn grid_buffer_builder_emits_paired_world_endpoints() {
+        let vp = Viewport::default();
+        let verts = grid_vertices_f32(&vp, 10);
+        assert!(!verts.is_empty());
+        assert!(verts.len() % 2 == 0);
+        // Endpoints sit on the viewport edges in world space.
+        let [ax, ay] = verts[0];
+        assert!((ay - vp.y_min as f32).abs() < 1e-6);
+        assert!(ax.is_finite());
+        // Every vertex round-trips through the viewport uniform into NDC.
+        let uniform = ViewportUniform::from_viewport(&vp);
+        for [x, y] in &verts {
+            let (nx, ny) = uniform.world_to_ndc(*x as f64, *y as f64);
+            assert!(nx >= -1.0 - 1e-5 && nx <= 1.0 + 1e-5, "ndc x={nx}");
+            assert!(ny >= -1.0 - 1e-5 && ny <= 1.0 + 1e-5, "ndc y={ny}");
+        }
+        // Bytes implied by the stride stay 8 per vertex.
+        assert_eq!(verts.len() * GRID_VERTEX_STRIDE % 8, 0);
+    }
+
+    #[test]
+    fn grid_buffer_builder_rejects_degenerate_viewports() {
+        assert!(grid_vertices_f32(&Viewport::new(5.0, -5.0, 0.0, 1.0), 10).is_empty());
+        assert!(grid_vertices_f32(&Viewport::new(0.0, 1.0, 1.0, 1.0), 10).is_empty());
+        assert!(grid_vertices_f32(&Viewport::new(f64::NAN, 1.0, 0.0, 1.0), 10).is_empty());
+        assert!(
+            grid_vertices_f32(&Viewport::new(0.0, 1.0, 0.0, f64::INFINITY), 10).is_empty()
+        );
     }
 
     #[test]

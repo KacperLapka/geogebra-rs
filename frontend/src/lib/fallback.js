@@ -162,6 +162,65 @@ function hexToLinear(hex) {
 const clampWidth = (w) => (Number.isFinite(w) ? Math.min(MAX_WIDTH_PX, Math.max(MIN_WIDTH_PX, w)) : DEFAULT_WIDTH_PX);
 const isIdent = (s) => typeof s === 'string' && /^[A-Za-z_][A-Za-z0-9_]*$/.test(s);
 
+// Grid parity with render::grid (1/2/5 nice steps, max 10, zero-snapped).
+// Rust owns the viewport truth; this mirror exists only so `npm run dev`
+// without the bundle demonstrates the same subdivision.
+function tickStep(min, max, maxTicks) {
+  if (!(min < max) || maxTicks === 0) return 0;
+  const span = max - min;
+  if (!Number.isFinite(span) || span <= 0) return 0;
+  const raw = span / maxTicks;
+  if (!Number.isFinite(raw) || raw <= 0) return 0;
+  const mag = Math.pow(10, Math.floor(Math.log10(raw)));
+  if (!Number.isFinite(mag) || mag <= 0) return 0;
+  const found = [1, 2, 5, 10].map((m) => m * mag).find((s) => span / s <= maxTicks);
+  return found ?? 10 * mag;
+}
+
+function collectTicks(min, max, step) {
+  const out = [];
+  let t = Math.ceil(min / step) * step;
+  let guard = 0;
+  while (t <= max && guard < 10000) {
+    out.push(Math.abs(t) < step * 1e-9 ? 0 : t);
+    t += step;
+    guard += 1;
+    if (!Number.isFinite(t)) break;
+  }
+  return out;
+}
+
+function gridTicks(min, max, maxTicks = 10) {
+  const step = tickStep(min, max, maxTicks);
+  if (!(step > 0)) return [];
+  return collectTicks(min, max, step);
+}
+
+function minorTicks(min, max, maxTicks = 10) {
+  const step = tickStep(min, max, maxTicks);
+  if (!(step > 0)) return [];
+  const mantissa = step / Math.pow(10, Math.floor(Math.log10(step)));
+  const divs = Math.abs(mantissa - 2) < 1e-9 ? 4 : 5;
+  const minor = step / divs;
+  return collectTicks(min, max, minor).filter((v) => {
+    const k = Math.round(v / step);
+    return Math.abs(v - k * step) > step * 1e-6;
+  });
+}
+
+function tickDecimals(step) {
+  if (!Number.isFinite(step) || !(step > 0)) return 0;
+  return Math.max(0, -Math.floor(Math.log10(step)));
+}
+
+function formatTick(step, value) {
+  if (Object.is(value, -0)) return '0';
+  if (Math.abs(value) < step * 1e-9) return '0';
+  if (value === 0) return '0';
+  const decimals = tickDecimals(step);
+  return value.toFixed(decimals);
+}
+
 function linearToHex(c) {
   const toSrgb = (v) => {
     const s = v <= 0.0031308 ? 12.92 * v : 1.055 * Math.pow(v, 1 / 2.4) - 0.055;
@@ -314,17 +373,16 @@ export function createFallback() {
       return { points, params: [...state.params.keys()] };
     },
     gridLines() {
-      const ticks = (min, max, maxTicks = 10) => {
-        if (!(min < max)) return [];
-        const span = max - min;
-        const mag = Math.pow(10, Math.floor(Math.log10(span / maxTicks)));
-        const step = [1, 2, 5, 10].map((m) => m * mag).find((s) => span / s <= maxTicks) ?? 10 * mag;
-        const out = [];
-        for (let t = Math.ceil(min / step) * step; t <= max; t += step) out.push(Math.abs(t) < step * 1e-9 ? 0 : t);
-        return out;
-      };
       const v = state.viewport;
-      return { x: ticks(v.x_min, v.x_max), y: ticks(v.y_min, v.y_max) };
+      const x = gridTicks(v.x_min, v.x_max);
+      const y = gridTicks(v.y_min, v.y_max);
+      const x_minor = minorTicks(v.x_min, v.x_max);
+      const y_minor = minorTicks(v.y_min, v.y_max);
+      const step_x = tickStep(v.x_min, v.x_max, 10);
+      const step_y = tickStep(v.y_min, v.y_max, 10);
+      const x_labels = x.map((value) => ({ value, text: formatTick(step_x, value) }));
+      const y_labels = y.map((value) => ({ value, text: formatTick(step_y, value) }));
+      return { x, y, x_minor, y_minor, x_labels, y_labels, step_x, step_y };
     },
     serializeWorkspace() {
       const doc = {

@@ -27,7 +27,10 @@
   let tangent = $state(null);
   let asymptotes = $state([]);
   let curves = $state([]);
-  let grid = $state({ x: [], y: [] });
+  // Rust-owned grid truth (4.4): majors stroke sync, minors faint, labels ride
+  // as `{value, text}` for the DOM overlay. `refresh()` repopulates the whole
+  // object from `backend.gridLines()` on every viewport change.
+  let grid = $state({ x: [], y: [], x_minor: [], y_minor: [], x_labels: [], y_labels: [], step_x: 0, step_y: 0 });
   let viewport = $state({ x_min: -10, x_max: 10, y_min: -10, y_max: 10 });
   let hover = $state(null);
   let workspace = $state(null);
@@ -147,8 +150,13 @@
   }
 
   function handleViewport(vp) {
+    // Local guard mirrors the Rust `update_viewport` rejection so a
+    // degenerate span never becomes local state diverging from Rust truth.
+    const { x_min, x_max, y_min, y_max } = vp ?? {};
+    if (![x_min, x_max, y_min, y_max].every(Number.isFinite)) return;
+    if (!(x_min < x_max) || !(y_min < y_max)) return;
     viewport = vp;
-    backend.updateViewport(vp.x_min, vp.x_max, vp.y_min, vp.y_max);
+    backend.updateViewport(x_min, x_max, y_min, y_max);
     refresh();
   }
 

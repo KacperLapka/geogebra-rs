@@ -17,6 +17,12 @@ pub use curve::{
     clamp_width, default_style, expand_ribbon, for_function_index, hex_to_linear, sample_curve,
     sample_curve_adaptive, sample_points_f32, tangent_segment, vertical_asymptote_segment,
 };
-pub use grid::{format_tick, grid_ticks, minor_ticks, tick_decimals, tick_step};
-pub use pipeline::{FRAME_BUDGET_MS, FrameStats, GpuStatus, Renderer, ViewportUniform};
+pub use grid::{
+    GridLabel, format_tick, grid_labels, grid_labels_for_range, grid_ticks, grid_vertices,
+    minor_ticks, tick_decimals, tick_step, viewport_minor_ticks, viewport_ticks,
+};
+pub use pipeline::{
+    FRAME_BUDGET_MS, FrameStats, GRID_VERTEX_STRIDE, GpuStatus, Renderer, ViewportUniform,
+    grid_vertex_layout, grid_vertices_f32,
+};
 pub use viewport::Viewport;

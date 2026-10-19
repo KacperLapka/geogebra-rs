@@ -18,8 +18,9 @@ use std::sync::{Mutex, OnceLock};
 
 use core_math::{find_extrema, find_inflections, find_poles, find_roots, parse, Expr, MarkerKind, Span};
 use render::{
-    clamp_width, default_style, for_function_index, grid_ticks, hex_to_linear, sample_curve,
-    tangent_segment, vertical_asymptote_segment, FunctionStyle, GpuStatus, Viewport, POLE_BREAK,
+    clamp_width, default_style, for_function_index, format_tick, grid_ticks, hex_to_linear,
+    minor_ticks, sample_curve, tangent_segment, tick_step, vertical_asymptote_segment,
+    FunctionStyle, GpuStatus, Viewport, POLE_BREAK,
 };
 use serde::{Deserialize, Serialize};
 use wasm_bindgen::prelude::*;
@@ -750,12 +751,41 @@ pub fn sample_points_for(id: &str, n: usize) -> String {
 }
 
 /// Tracer helper: grid ticks for the current viewport.
+///
+/// Returns majors (`x`/`y`, 1/2/5 steps, `max_ticks=10`, zero-snapped) plus
+/// the additive grid state the Svelte overlay needs: `x_minor`/`y_minor`
+/// (strictly between majors), `x_labels`/`y_labels` (`{value,text}` via
+/// `format_tick`, zero renders `"0"`), and `step_x`/`step_y`. The `x`/`y`
+/// arrays are computed by the same [`grid_ticks`] call as before, so existing
+/// consumers read byte-identical majors.
 #[wasm_bindgen]
 pub fn grid_lines() -> String {
     let s = session().lock().unwrap();
     let x = grid_ticks(s.viewport.x_min, s.viewport.x_max, 10);
     let y = grid_ticks(s.viewport.y_min, s.viewport.y_max, 10);
-    serde_json::to_string(&serde_json::json!({ "x": x, "y": y })).unwrap()
+    let x_minor = minor_ticks(s.viewport.x_min, s.viewport.x_max, 10);
+    let y_minor = minor_ticks(s.viewport.y_min, s.viewport.y_max, 10);
+    let step_x = tick_step(s.viewport.x_min, s.viewport.x_max, 10);
+    let step_y = tick_step(s.viewport.y_min, s.viewport.y_max, 10);
+    let x_labels: Vec<serde_json::Value> = x
+        .iter()
+        .map(|&v| serde_json::json!({ "value": v, "text": format_tick(step_x, v) }))
+        .collect();
+    let y_labels: Vec<serde_json::Value> = y
+        .iter()
+        .map(|&v| serde_json::json!({ "value": v, "text": format_tick(step_y, v) }))
+        .collect();
+    serde_json::to_string(&serde_json::json!({
+        "x": x,
+        "y": y,
+        "x_minor": x_minor,
+        "y_minor": y_minor,
+        "x_labels": x_labels,
+        "y_labels": y_labels,
+        "step_x": step_x,
+        "step_y": step_y,
+    }))
+    .unwrap()
 }
 
 /// Pipeline status for the Svelte banner and loop backend selection.
@@ -1448,5 +1478,89 @@ mod tests {
         let hidden: serde_json::Value = parse_json(&sample_points(64));
         assert!(hidden["points"].as_array().unwrap().is_empty());
         assert!(hidden["asymptotes"].as_array().unwrap().is_empty());
+    }
+
+    #[test]
+    fn grid_lines_carry_minors_labels_and_steps_additively() {
+        let _guard = test_lock().lock().unwrap();
+        reset_session();
+        update_viewport(-10.0, 10.0, -10.0, 10.0);
+        let grid: serde_json::Value = parse_json(&grid_lines());
+        let x = grid["x"].as_array().unwrap();
+        let y = grid["y"].as_array().unwrap();
+        // Majors: 1/2/5 steps, at most 10 per axis including 0.
+        assert!(!x.is_empty() && x.len() <= 11);
+        assert!(!y.is_empty() && y.len() <= 11);
+        assert!(x.iter().any(|v| v.as_f64().unwrap() == 0.0));
+        // `x`/`y` stay byte-identical to the direct tick call.
+        let expect_x = render::grid_ticks(-10.0, 10.0, 10);
+        assert_eq!(
+            x.iter().map(|v| v.as_f64().unwrap()).collect::<Vec<_>>(),
+            expect_x
+        );
+        // Minors subdivide strictly between majors.
+        let x_minor = grid["x_minor"].as_array().unwrap();
+        let y_minor = grid["y_minor"].as_array().unwrap();
+        assert!(x_minor.len() > x.len());
+        assert!(y_minor.len() > y.len());
+        for m in x_minor {
+            let mv = m.as_f64().unwrap();
+            assert!(x.iter().all(|mj| (mv - mj.as_f64().unwrap()).abs() > 1e-9));
+        }
+        // Labels mirror majors with stable text; zero reads "0".
+        let x_labels = grid["x_labels"].as_array().unwrap();
+        assert_eq!(x_labels.len(), x.len());
+        for (label, major) in x_labels.iter().zip(x.iter()) {
+            assert_eq!(label["value"].as_f64().unwrap(), major.as_f64().unwrap());
+            assert!(!label["text"].as_str().unwrap().is_empty());
+            assert_ne!(label["text"].as_str().unwrap(), "-0");
+        }
+        let zero = x_labels
+            .iter()
+            .find(|l| l["value"].as_f64().unwrap() == 0.0)
+            .expect("zero label");
+        assert_eq!(zero["text"], "0");
+        // Steps are positive 1/2/5 nice values.
+        assert!(grid["step_x"].as_f64().unwrap() > 0.0);
+        assert!(grid["step_y"].as_f64().unwrap() > 0.0);
+    }
+
+    #[test]
+    fn grid_zoom_sweep_stays_bounded_with_minors() {
+        let _guard = test_lock().lock().unwrap();
+        reset_session();
+        let mut prev_step = f64::INFINITY;
+        let mut width = 20.0;
+        for _ in 0..14 {
+            update_viewport(-width / 2.0, width / 2.0, -width / 2.0, width / 2.0);
+            let grid: serde_json::Value = parse_json(&grid_lines());
+            let step_x = grid["step_x"].as_f64().unwrap();
+            assert!(step_x > 0.0 && step_x <= prev_step, "step grew: {step_x}");
+            let x = grid["x"].as_array().unwrap();
+            assert!(!x.is_empty() && x.len() <= 11);
+            assert!(x.iter().any(|v| v.as_f64().unwrap() == 0.0));
+            assert!(!grid["x_minor"].as_array().unwrap().is_empty());
+            assert!(!grid["x_labels"].as_array().unwrap().is_empty());
+            prev_step = step_x;
+            width /= 2.0;
+        }
+    }
+
+    #[test]
+    fn grid_degenerate_viewport_keeps_previous_and_revision() {
+        let _guard = test_lock().lock().unwrap();
+        reset_session();
+        update_viewport(-10.0, 10.0, -10.0, 10.0);
+        let before: serde_json::Value = parse_json(&grid_lines());
+        let rev_before: serde_json::Value = parse_json(&gpu_status());
+        // Degenerate, NaN, and infinite updates all reject.
+        update_viewport(5.0, -5.0, 0.0, 1.0);
+        update_viewport(1.0, 1.0, 0.0, 1.0);
+        update_viewport(f64::NAN, 1.0, 0.0, 1.0);
+        update_viewport(0.0, 1.0, 0.0, f64::INFINITY);
+        let after: serde_json::Value = parse_json(&grid_lines());
+        let rev_after: serde_json::Value = parse_json(&gpu_status());
+        assert_eq!(before, after);
+        assert_eq!(rev_before["viewport_revision"], rev_after["viewport_revision"]);
     }
 }

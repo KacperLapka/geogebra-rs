@@ -22,6 +22,17 @@
     ((viewport.y_max - y) / (viewport.y_max - viewport.y_min)) * h
   ];
 
+  // DOM label positioning only: fraction along each axis via the same
+  // `toScreen` mapping above (no tick math here; Rust owns ticks). Labels
+  // render in the overlay below and may lag the canvas stroke by one frame
+  // during continuous drag, per E4-VIEWPORT-GRID.
+  const xFrac = (v) => (v - viewport.x_min) / (viewport.x_max - viewport.x_min);
+  const yFrac = (v) => (viewport.y_max - v) / (viewport.y_max - viewport.y_min);
+  const xSpanOk = () =>
+    Number.isFinite(viewport.x_max - viewport.x_min) && viewport.x_max > viewport.x_min;
+  const ySpanOk = () =>
+    Number.isFinite(viewport.y_max - viewport.y_min) && viewport.y_max > viewport.y_min;
+
   function fitCanvas() {
     if (!canvas) return;
     const rect = canvas.getBoundingClientRect();
@@ -40,17 +51,41 @@
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.clearRect(0, 0, w, h);
 
-    // grid
+    // grid: Rust-owned majors sync plus faint minors, same frame.
+    // Majors use the established tone; minors subdivide strictly between
+    // majors (÷5, or ÷4 for 2-mantissa steps) at a fainter alpha.
     ctx.strokeStyle = '#8883';
     ctx.lineWidth = 1;
     ctx.beginPath();
     for (const t of grid.x ?? []) {
+      if (!Number.isFinite(t)) continue;
       const [px] = toScreen(t, 0, w, h);
+      if (!Number.isFinite(px)) continue;
       ctx.moveTo(px, 0);
       ctx.lineTo(px, h);
     }
     for (const t of grid.y ?? []) {
+      if (!Number.isFinite(t)) continue;
       const [, py] = toScreen(0, t, w, h);
+      if (!Number.isFinite(py)) continue;
+      ctx.moveTo(0, py);
+      ctx.lineTo(w, py);
+    }
+    ctx.stroke();
+    ctx.strokeStyle = '#8882';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    for (const t of grid.x_minor ?? []) {
+      if (!Number.isFinite(t)) continue;
+      const [px] = toScreen(t, 0, w, h);
+      if (!Number.isFinite(px)) continue;
+      ctx.moveTo(px, 0);
+      ctx.lineTo(px, h);
+    }
+    for (const t of grid.y_minor ?? []) {
+      if (!Number.isFinite(t)) continue;
+      const [, py] = toScreen(0, t, w, h);
+      if (!Number.isFinite(py)) continue;
       ctx.moveTo(0, py);
       ctx.lineTo(w, py);
     }
@@ -62,10 +97,12 @@
     {
       const [, zeroY] = toScreen(0, 0, w, h);
       const [zeroX] = toScreen(0, 0, w, h);
-      ctx.moveTo(0, zeroY);
-      ctx.lineTo(w, zeroY);
-      ctx.moveTo(zeroX, 0);
-      ctx.lineTo(zeroX, h);
+      if (Number.isFinite(zeroX) && Number.isFinite(zeroY)) {
+        ctx.moveTo(0, zeroY);
+        ctx.lineTo(w, zeroY);
+        ctx.moveTo(zeroX, 0);
+        ctx.lineTo(zeroX, h);
+      }
     }
     ctx.stroke();
 
@@ -278,5 +315,57 @@
       onLeave();
     }}
   ></canvas>
+  <!-- Tick labels: transparent DOM overlay only (never canvas text/atlas).
+       Positioned from bridge `{value, text}` via the `toScreen` fractions
+       above; geometry strokes sync while these may lag one frame. -->
+  <div class="grid-overlay" aria-hidden="true">
+    {#if xSpanOk()}
+      {#each grid?.x_labels ?? [] as l (l.value)}
+        {#if Number.isFinite(l?.value) && typeof l?.text === 'string'}
+          <span class="grid-label x" style="left: {xFrac(l.value) * 100}%">{l.text}</span>
+        {/if}
+      {/each}
+    {/if}
+    {#if ySpanOk()}
+      {#each grid?.y_labels ?? [] as l (l.value)}
+        {#if Number.isFinite(l?.value) && typeof l?.text === 'string'}
+          <span class="grid-label y" style="top: {yFrac(l.value) * 100}%">{l.text}</span>
+        {/if}
+      {/each}
+    {/if}
+  </div>
   {@render children?.()}
 </div>
+
+<style>
+  .canvas-wrap {
+    position: relative;
+  }
+  .canvas-wrap canvas {
+    display: block;
+    width: 100%;
+  }
+  .grid-overlay {
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    overflow: hidden;
+  }
+  .grid-label {
+    position: absolute;
+    font-size: 10px;
+    line-height: 1;
+    color: #6b7280;
+    background: transparent;
+    white-space: nowrap;
+    pointer-events: none;
+  }
+  .grid-label.x {
+    bottom: 2px;
+    transform: translateX(-50%);
+  }
+  .grid-label.y {
+    left: 4px;
+    transform: translateY(-50%);
+  }
+</style>
