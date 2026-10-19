@@ -57,7 +57,10 @@ pub async fn save(State(store): State<Arc<Store>>, body: axum::body::Bytes) -> R
     } else {
         return (StatusCode::BAD_REQUEST, "invalid workspace").into_response();
     }
-    let slug = store.put(doc);
+    let slug = match store.put(doc).await {
+        Ok(slug) => slug,
+        Err(_) => return (StatusCode::INTERNAL_SERVER_ERROR, "db error").into_response(),
+    };
     debug_assert!(is_slug(&slug));
     debug_assert!(started.elapsed().as_millis() < 50);
     (
@@ -71,9 +74,10 @@ pub async fn load(State(store): State<Arc<Store>>, Path(slug): Path<String>) -> 
     if !is_slug(&slug) {
         return (StatusCode::NOT_FOUND, "unknown workspace").into_response();
     }
-    match store.get(&slug) {
-        Some(blob) => (StatusCode::OK, Json(blob)).into_response(),
-        None => (StatusCode::NOT_FOUND, "unknown workspace").into_response(),
+    match store.get(&slug).await {
+        Ok(Some(blob)) => (StatusCode::OK, Json(blob)).into_response(),
+        Ok(None) => (StatusCode::NOT_FOUND, "unknown workspace").into_response(),
+        Err(_) => (StatusCode::INTERNAL_SERVER_ERROR, "db error").into_response(),
     }
 }
 
@@ -89,6 +93,12 @@ mod tests {
             "params": {"a": 2.0},
             "viewport": {"x_min": -10.0, "x_max": 10.0, "y_min": -10.0, "y_max": 10.0}
         })
+    }
+
+    async fn test_store() -> Arc<Store> {
+        let pool = sqlx::SqlitePool::connect("sqlite::memory:").await.unwrap();
+        Store::ensure_table(&pool).await.unwrap();
+        Arc::new(Store::new(pool))
     }
 
     async fn body_json(resp: Response) -> (StatusCode, Value) {
@@ -117,7 +127,7 @@ mod tests {
 
     #[tokio::test]
     async fn save_then_load_round_trips_identical_blob() {
-        let store = Arc::new(Store::new());
+        let store = test_store().await;
         let doc = tracer_doc();
         let bytes = axum::body::Bytes::from(serde_json::to_vec(&doc).unwrap());
         let (status, saved) = body_json(save(State(store.clone()), bytes).await).await;
@@ -132,7 +142,7 @@ mod tests {
 
     #[tokio::test]
     async fn styled_blob_round_trips_opaque() {
-        let store = Arc::new(Store::new());
+        let store = test_store().await;
         let mut doc = tracer_doc();
         doc["functions"]["g"] = serde_json::json!("b*sin(x)");
         doc["style"] = serde_json::json!({"f": {"color": "#0F4C81"}});
@@ -147,7 +157,7 @@ mod tests {
 
     #[tokio::test]
     async fn unknown_and_malformed_slugs_are_404() {
-        let store = Arc::new(Store::new());
+        let store = test_store().await;
         let (status, _) = status_text(load(State(store.clone()), Path("AAAAAAAA".to_string())).await).await;
         assert_eq!(status, StatusCode::NOT_FOUND);
         for bad in ["short", "way-too-long-slug", "bad slug!", ""] {
@@ -159,7 +169,7 @@ mod tests {
 
     #[tokio::test]
     async fn oversize_payload_is_413() {
-        let store = Arc::new(Store::new());
+        let store = test_store().await;
         let big = vec![b'x'; MAX_BODY_BYTES + 1];
         let (status, _) =
             status_text(save(State(store), axum::body::Bytes::from(big)).await).await;
@@ -168,7 +178,7 @@ mod tests {
 
     #[tokio::test]
     async fn invalid_documents_are_400() {
-        let store = Arc::new(Store::new());
+        let store = test_store().await;
         // invalid JSON
         let (status, _) = status_text(
             save(State(store.clone()), axum::body::Bytes::from("{oops")).await,
