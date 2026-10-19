@@ -133,3 +133,34 @@ test('matrix: empty markers silent and all-layers-off hint retains analysis', ()
   const toggleBlock = app.slice(app.indexOf('toggles'), app.indexOf('toggles') + 2000);
   assert.ok(!toggleBlock.includes('deriveAll'), 'toggle path must not refire symbolic analysis');
 });
+
+test('6.12 markers float off curve: dots centered, out-of-range skipped, viewport synced', () => {
+  const canvas = read('src/Canvas.svelte');
+  const app = read('src/App.svelte');
+  // Placement goes through the single mapping truth (no duplicate math).
+  assert.ok(canvas.includes('markerOnScreen'), 'markers must gate on markerOnScreen');
+  assert.ok(canvas.includes('{#if markerOnScreen(m)}'), 'each marker must check visibility');
+  assert.ok(canvas.includes('left:{xFrac(m.x)'), 'left% must reuse xFrac/toScreen');
+  assert.ok(canvas.includes('top:{yFrac(m.y)'), 'top% must reuse yFrac/toScreen');
+  // True dot-centering inside the 44px hit box (no button-box offset).
+  // Scoped to .marker: global flex/width substrings also match toolbar CSS.
+  assert.ok(canvas.includes('transform: translate(-50%, -50%)'), 'button center must sit on the curve point');
+  const start = canvas.indexOf('.marker {');
+  const end = canvas.indexOf('.marker:focus-visible');
+  assert.ok(start >= 0 && end > start, '.marker rule must exist');
+  const markerCss = canvas.slice(start, end);
+  assert.ok(markerCss.includes('display: flex') && markerCss.includes('align-items: center') && markerCss.includes('justify-content: center'), 'dot must be flex-centered');
+  assert.ok(!markerCss.includes('margin: -16px') && !markerCss.includes('padding: 16px'), 'offsetting box padding/margin must be gone');
+  assert.ok(/(^|[^\w-])width: 44px/.test(markerCss) && !markerCss.includes('min-width') && /(^|[^\w-])height: 44px/.test(markerCss) && !markerCss.includes('min-height'), '44px hit targets retained as box size');
+  // Out-of-range means skip, not clamp.
+  assert.ok(canvas.includes('fx >= 0') && canvas.includes('fy >= 0') && canvas.includes('fx <= 1') && canvas.includes('fy <= 1'), 'out-of-range skip required');
+  // Tooltips/labels agree with the curve coordinate.
+  assert.ok(canvas.includes('title={markerTip(m)}'), 'tooltip must show the marker coordinate');
+  assert.ok(canvas.includes('aria-label={markerLabel(m)}'), 'aria label must name the marker');
+  // Viewport sync: DOM re-derives from the same viewport in the dirty frame;
+  // App ordering (validate → updateViewport → refresh) is read-only here.
+  assert.ok(canvas.includes('void viewport'), 'dirty frame must re-derive on viewport');
+  assert.ok(app.includes('backend.updateViewport'), 'viewport must still sync to Rust');
+  assert.ok(app.includes('refresh()'), 'viewport path must still refresh markers');
+  assert.ok(!canvas.includes('MARKER_COLORS'), 'canvas-only marker circles must stay gone');
+});

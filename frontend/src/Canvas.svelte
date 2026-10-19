@@ -50,6 +50,19 @@
   const ySpanOk = () =>
     Number.isFinite(viewport.y_max - viewport.y_min) && viewport.y_max > viewport.y_min;
 
+  // Single visibility truth for the DOM marker layer: finite coords, sane
+  // spans, and fractions inside [0, 1]. Out-of-range means skip render
+  // (hidden), never a clamped/floating dot mid-canvas. Uses the same
+  // xFrac/yFrac fractions that position the button, which share toScreen's
+  // mapping, so canvas strokes and DOM dots agree in every viewport.
+  const markerOnScreen = (m) => {
+    if (!Number.isFinite(m?.x) || !Number.isFinite(m?.y)) return false;
+    if (!xSpanOk() || !ySpanOk()) return false;
+    const fx = xFrac(m.x);
+    const fy = yFrac(m.y);
+    return fx >= 0 && fx <= 1 && fy >= 0 && fy <= 1;
+  };
+
   const MARKER_STYLE = {
     root: { color: '#dc2626', label: 'Root' },
     min: { color: '#4f46e5', label: 'Minimum' },
@@ -423,7 +436,7 @@
     {#if showMarkers}
       <div class="marker-layer">
         {#each (markers ?? []) as m (m.kind + ':' + m.x + ':' + m.y)}
-          {#if Number.isFinite(m.x) && Number.isFinite(m.y) && xSpanOk() && ySpanOk()}
+          {#if markerOnScreen(m)}
             {@const meta = markerMeta(m)}
             <button
               type="button"
@@ -533,10 +546,13 @@
     transform: translate(-50%, -50%);
     background: transparent;
     border: none;
-    padding: 16px;
-    margin: -16px;
-    min-width: 44px;
-    min-height: 44px;
+    padding: 0;
+    margin: 0;
+    width: 44px;
+    height: 44px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
     cursor: pointer;
     pointer-events: auto;
   }
@@ -547,6 +563,7 @@
   }
   .marker .dot {
     display: block;
+    flex: none;
     width: 12px;
     height: 12px;
     border-radius: 9999px;
