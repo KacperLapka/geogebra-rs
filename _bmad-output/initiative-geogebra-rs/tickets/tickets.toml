@@ -1,0 +1,41 @@
+# GeoGebra RS — initiative epic breakdown, in build order.
+# Table order is build order. `id` is permanent, never reused.
+
+[[epic]]
+id = 1
+slug = "epic-scaffold-tracer"
+title = "Project scaffold and tracer bullet"
+description = "4-crate Cargo workspace restructured; Svelte 5 + Vite + wasm-pack pipeline live; one polynomial parsed, plotted on a wgpu canvas at 60 FPS; a hovered point returns (x, y) from Rust to a Svelte tooltip."
+covers = ["R1", "R2", "R8", "R9"]
+
+[[epic]]
+id = 2
+slug = "epic-symbolic-calculus"
+title = "Symbolic calculus engine"
+description = "Symbolic first and second derivatives, AST simplification, tangent lines, Brent root finder, and extrema/inflection-point detection are all correct and native-tested across supported differentiable functions."
+covers = ["R3", "R4", "R5", "R6"]
+after = [{ epic = 1, needs = "working parse-eval-render pipeline and wasm_bridge surface" }]
+
+[[epic]]
+id = 3
+slug = "epic-asymptote-guard"
+title = "Asymptote and discontinuity guard"
+description = "Rational functions and transcendental functions (tan, cot, 1/x) render without false connecting lines across poles; vertical, horizontal, and slant asymptote dashed overlays appear correctly."
+covers = ["R7"]
+after = [{ epic = 2, needs = "Brent solver and pole-magnitude threshold logic" }]
+
+[[epic]]
+id = 4
+slug = "epic-rendering-polish"
+title = "Full rendering and multi-curve polish"
+description = "Quad-ribbon curves fully antialiased; dashed derivatives; configurable colour palettes and visibility toggles; smooth 60 FPS grid on WebGPU and WebGL2 across Chrome, Firefox, and Safari."
+covers = ["R8", "R9", "R10"]
+after = [{ epic = 1, needs = "wgpu pipeline and canvas event loop" }]
+
+[[epic]]
+id = 5
+slug = "epic-workspace-persistence"
+title = "Workspace persistence and sharing"
+description = "Workspace state serialises to JSON under 10 KB; Axum POST /api/workspaces returns an 8-char slug in under 50 ms; GET /api/workspaces/:slug restores the identical session on a second device."
+covers = ["R11", "R12"]
+after = [{ epic = 1, needs = "workspace JSON schema defined by wasm_bridge serialisation" }]
