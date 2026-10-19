@@ -260,4 +260,21 @@ mod tests {
         assert_eq!(m.x, 1.0);
         assert_eq!(m.y, 3.0);
     }
+
+    #[test]
+    fn tangent_with_slider_param_tracks_slope() {
+        // f(x) = a*x^2, a = 2 → f' = 2*a*x; the slider path evaluates with
+        // params, so tangent_at must thread them to both y0 and slope.
+        let f = parse("a*x^2").unwrap();
+        let mut params = HashMap::new();
+        params.insert("a".to_string(), 2.0);
+        let x0 = 1.0;
+        let (y0, slope) = tangent_coeffs(&f, &params, x0);
+        assert!((y0 - 2.0).abs() < 1e-12, "y0: got {y0}");
+        assert!((slope - 4.0).abs() < 1e-12, "slope: got {slope}");
+        for dx in [-0.5, 0.0, 1.0] {
+            let got = tangent_at(&f, &params, x0, x0 + dx);
+            assert!((got - (2.0 + 4.0 * dx)).abs() < 1e-12, "dx={dx}: got {got}");
+        }
+    }
 }
