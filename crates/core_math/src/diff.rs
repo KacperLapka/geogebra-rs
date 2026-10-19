@@ -237,4 +237,86 @@ mod tests {
         let d = deriv("x+0");
         assert!(matches!(d, Expr::Number { value, .. } if value == 1.0));
     }
+
+    #[test]
+    fn differentiates_transcendental_compositions_with_chain_rule() {
+        // sin(x^2)' = 2x·cos(x^2); exp(sin x)' = cos x·exp(sin x);
+        // ln(x^2+1)' = 2x/(x^2+1); cos(x)' = -sin(x).
+        let cases: &[(&str, &[f64], fn(f64) -> f64)] = &[
+            ("sin(x^2)", &[0.0, 0.5, -1.3, 2.0], |x| 2.0 * x * (x * x).cos()),
+            (
+                "exp(sin(x))",
+                &[0.0, 0.7, -1.1, 2.0],
+                |x| x.cos() * x.sin().exp(),
+            ),
+            (
+                "ln(x^2+1)",
+                &[0.0, 1.3, -2.0],
+                |x| 2.0 * x / (x * x + 1.0),
+            ),
+            ("cos(x)", &[0.3, -0.8], |x| -x.sin()),
+            (
+                "sin(cos(x))",
+                &[0.9],
+                |x| -x.sin() * x.cos().cos(),
+            ),
+        ];
+        for (formula, xs, want) in cases {
+            let d = deriv(formula);
+            for x in *xs {
+                assert!(
+                    (eval_at(&d, *x) - want(*x)).abs() < 1e-12,
+                    "{formula} x={x}: got {} want {}",
+                    eval_at(&d, *x),
+                    want(*x)
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn differentiates_transcendental_second_derivatives() {
+        // sin'' = -sin; exp'' = exp; ln(x)'' = -1/x^2 (x > 0).
+        let f = parse("sin(x)").unwrap();
+        let f2 = differentiate(&differentiate(&f, "x"), "x");
+        let g = parse("exp(x)").unwrap();
+        let g2 = differentiate(&differentiate(&g, "x"), "x");
+        let h = parse("ln(x)").unwrap();
+        let h2 = differentiate(&differentiate(&h, "x"), "x");
+        for x in [0.0, 0.7, -1.1] {
+            assert!(
+                (eval_at(&f2, x) - -x.sin()).abs() < 1e-12,
+                "sin'' x={x}"
+            );
+            assert!(
+                (eval_at(&g2, x) - x.exp()).abs() < 1e-12,
+                "exp'' x={x}"
+            );
+        }
+        for x in [0.5, 2.0] {
+            assert!(
+                (eval_at(&h2, x) - -1.0 / (x * x)).abs() < 1e-12,
+                "ln'' x={x}"
+            );
+        }
+    }
+
+    #[test]
+    fn transcendental_derivatives_are_canonically_simplified() {
+        // exp(0) folds to 1, so d/dx (exp(0)*x) is exactly 1.
+        let d = deriv("exp(0)*x");
+        assert!(
+            matches!(d, Expr::Number { value, .. } if value == 1.0),
+            "canonical: got {d:?}"
+        );
+        // ln(1) folds to 0, so d/dx (ln(1)+cos(x)) is -sin(x).
+        let e = deriv("ln(1)+cos(x)");
+        for x in [0.0, 0.3, -0.8] {
+            assert!(
+                (eval_at(&e, x) - -x.sin()).abs() < 1e-12,
+                "x={x}: got {}",
+                eval_at(&e, x)
+            );
+        }
+    }
 }
