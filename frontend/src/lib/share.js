@@ -124,7 +124,10 @@ export async function loadWorkspace(slug, fetchFn = fetch) {
 
 /**
  * Restore a workspace doc through the existing backend ABI only (AD-5):
- * `setFunction` + `updateParam` + `updateViewport`. No new ABI.
+ * `setFunction` + `updateParam` + `updateViewport` plus the style setters
+ * (`setFunctionStyle` + `setFunctionVisibility`) for the optional 4.3
+ * style map. No new ABI. A missing (or null) style map restores without
+ * custom styles; malformed style entries are skipped, never fatal.
  * Returns `{ok:true}` or `{ok:false, error}`.
  */
 export function restoreWorkspace(backend, doc) {
@@ -141,6 +144,31 @@ export function restoreWorkspace(backend, doc) {
     }
     const vp = doc.viewport;
     backend.updateViewport(vp.x_min, vp.x_max, vp.y_min, vp.y_max);
+    const style = doc.style ?? {};
+    if (style && typeof style === 'object') {
+      for (const [id, entry] of Object.entries(style)) {
+        if (!entry || typeof entry !== 'object') continue;
+        const { color_hex, width_px, dashed, visible } = entry;
+        if (
+          typeof color_hex === 'string' &&
+          typeof width_px === 'number' &&
+          typeof dashed === 'boolean'
+        ) {
+          try {
+            backend.setFunctionStyle(id, color_hex, width_px, dashed);
+          } catch {
+            // additive-only: a bad style entry never fails the restore
+          }
+        }
+        if (typeof visible === 'boolean') {
+          try {
+            backend.setFunctionVisibility(id, visible);
+          } catch {
+            // additive-only: a bad visibility entry never fails the restore
+          }
+        }
+      }
+    }
     return { ok: true };
   } catch {
     return { ok: false, error: 'invalid' };

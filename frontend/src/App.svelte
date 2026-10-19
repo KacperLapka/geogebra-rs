@@ -234,12 +234,20 @@
   onMount(async () => {
     backend = await getBackend();
     backend.setCanvasSize(800, 420);
-    // Fixed demo curves so the 4.3 palette shows three ribbons; `f` flows
-    // through the formula bar below.
-    for (const c of DEMO_CURVES) {
-      if (c.id !== 'f') backend.setFunction(c.id, c.formula);
+    // Shared link view: primary /w/<slug>, fallback ?s=<slug>.
+    const slug = slugFromLocation(window.location);
+    if (slug) {
+      // Link loads reproduce the stored session: never seed demos here;
+      // restoreFromSlug sets functions/params/viewport/styles from the doc.
+      await restoreFromSlug(slug);
+    } else {
+      // Fixed demo curves so the 4.3 palette shows three ribbons; `f` flows
+      // through the formula bar below. Seeded only without a slug.
+      for (const c of DEMO_CURVES) {
+        if (c.id !== 'f') backend.setFunction(c.id, c.formula);
+      }
+      applyFormula(formula);
     }
-    applyFormula(formula);
     const goOnline = () => (online = true);
     const goOffline = () => (online = false);
     window.addEventListener('online', goOnline);
@@ -251,9 +259,6 @@
       shareOpen = false;
     };
     window.addEventListener('pointerdown', onPointer);
-    // Shared link view: primary /w/<slug>, fallback ?s=<slug>.
-    const slug = slugFromLocation(window.location);
-    if (slug) await restoreFromSlug(slug);
   });
 </script>
 

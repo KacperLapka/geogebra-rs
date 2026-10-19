@@ -62,11 +62,22 @@ pub fn default_style() -> FunctionStyle {
     }
 }
 
+/// 8-colour colourblind-safe cycle (E4-PALETTE). Index 0 stays tracer-blue
+/// `#2563eb` (keeps the 4.1 parity test and 2D/GPU identity); entries 1-7
+/// are Okabe-Ito-safe. Assigned in order `f -> f' -> f'' -> cycle`;
+/// `index % 8` wraps.
+pub const PALETTE_HEXES: [&str; 8] = [
+    "#2563eb", "#E69F00", "#56B4E9", "#009E73", "#F0E442", "#0072B2", "#D55E00", "#CC79A7",
+];
+
 /// Style for the Nth function. Index 0 is the tracer curve in tracer blue;
-/// further indices reuse the default until the 8-colour cycle lands in 4.3.
+/// further indices walk the 8-entry [`PALETTE_HEXES`] cycle (`% 8` wraps).
 pub fn for_function_index(index: usize) -> FunctionStyle {
-    let _ = index;
-    default_style()
+    let mut style = default_style();
+    if let Some(c) = hex_to_linear(PALETTE_HEXES[index % PALETTE_HEXES.len()]) {
+        style.color = c;
+    }
+    style
 }
 
 /// Clamp a width into `[MIN_WIDTH_PX, MAX_WIDTH_PX]`; non-finite falls back
@@ -477,6 +488,36 @@ mod tests {
             assert!((a - b).abs() < 1e-6);
         }
         assert_eq!(for_function_index(0), s);
+    }
+
+    #[test]
+    fn palette_cycles_in_order_and_wraps() {
+        // Index 0 stays tracer-blue (4.1 parity); entries 1-2 differ.
+        let zero = for_function_index(0);
+        assert_eq!(zero, default_style());
+        let one = for_function_index(1);
+        let two = for_function_index(2);
+        assert_ne!(one.color, zero.color);
+        assert_ne!(two.color, zero.color);
+        assert_ne!(two.color, one.color);
+        // Exact cycle entries come from the hex table via hex_to_linear.
+        for (i, hex) in PALETTE_HEXES.iter().enumerate() {
+            let expect = hex_to_linear(hex).unwrap();
+            let got = for_function_index(i).color;
+            for (a, b) in got.iter().zip(expect.iter()) {
+                assert!((a - b).abs() < 1e-6, "entry {i} {hex} mismatch");
+            }
+        }
+        // `% 8` wraps: ninth id reuses entry 0.
+        assert_eq!(for_function_index(8), for_function_index(0));
+        assert_eq!(for_function_index(9), for_function_index(1));
+        assert_eq!(for_function_index(16), for_function_index(0));
+        // Width/flags stay default across the cycle.
+        for i in 0..16 {
+            let s = for_function_index(i);
+            assert_eq!(s.width_px, DEFAULT_WIDTH_PX);
+            assert!(!s.dashed && s.visible);
+        }
     }
 
     #[test]

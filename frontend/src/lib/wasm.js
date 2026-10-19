@@ -2,8 +2,8 @@
 // Every backend exposes the same synchronous surface:
 //   kind, parseAndValidate, setFunction, setFunctionStyle,
 //   setFunctionVisibility, updateParam, updateViewport,
-//   setCanvasSize, queryHover, samplePoints, gridLines, serializeWorkspace,
-//   gpuStatus
+//   setCanvasSize, queryHover, samplePoints, samplePointsFor,
+//   gridLines, serializeWorkspace, gpuStatus
 
 function asValid(raw) {
   if (raw && Array.isArray(raw.params)) return { ok: true, params: raw.params };
@@ -23,6 +23,7 @@ function wrapRust(pkg) {
     setCanvasSize: (w, h) => pkg.set_canvas_size(w, h),
     queryHover: (px, py) => JSON.parse(pkg.query_hover(px, py)),
     samplePoints: (n) => JSON.parse(pkg.sample_points(n)),
+    samplePointsFor: (id, n) => JSON.parse(pkg.sample_points_for(id, n)),
     gridLines: () => JSON.parse(pkg.grid_lines()),
     serializeWorkspace: () => JSON.parse(pkg.serialize_workspace()),
     gpuStatus: () => JSON.parse(pkg.gpu_status())
@@ -43,7 +44,8 @@ export async function getBackend() {
     if (
       typeof pkg.parse_and_validate !== 'function' ||
       typeof pkg.set_function_style !== 'function' ||
-      typeof pkg.set_function_visibility !== 'function'
+      typeof pkg.set_function_visibility !== 'function' ||
+      typeof pkg.sample_points_for !== 'function'
     )
       throw new Error('abi mismatch');
     cached = wrapRust(pkg);

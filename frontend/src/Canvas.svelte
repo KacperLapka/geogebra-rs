@@ -1,5 +1,8 @@
 <script>
-  let { points, viewport, grid, hover, style, onViewport, onHover, onLeave, onSize, onFps, children } = $props();
+  // Multi-curve canvas (4.3): `curves` is a list of `{id, points, style}`
+  // with per-curve `{color, widthPx, dashed, visible}`. Legacy single-curve
+  // `points`/`style` props still work: they render as one curve.
+  let { curves, points, viewport, grid, hover, style, onViewport, onHover, onLeave, onSize, onFps, children } = $props();
 
   let canvas = $state(null);
   let ctx = $state(null);
@@ -62,17 +65,22 @@
     }
     ctx.stroke();
 
-    // curve (breaks on null y; skipped when the style hides it)
-    ctx.strokeStyle = style?.color ?? '#2563eb';
-    // Clamp like every other layer: ABI + shader enforce [2.5, 6.0].
-    ctx.lineWidth = Number.isFinite(style?.widthPx) ? Math.min(6.0, Math.max(2.5, style.widthPx)) : 3.5;
-    // 2D parity with the GPU dash: 8px-on / 6px-off screen-space, solid resets.
-    ctx.setLineDash(style?.dashed ? [8, 6] : []);
-    ctx.lineDashOffset = 0;
-    ctx.beginPath();
-    let pen = false;
-    if (style?.visible !== false) {
-      for (const [x, y] of points ?? []) {
+    // curves (breaks on null y; skipped when the style hides it)
+    // One draw block per curve: colour, clamped width, dash + offset reset,
+    // visibility skip. Viewport/hover math untouched.
+    const list = curves ?? (points ? [{ id: 'f', points, style }] : []);
+    for (const curve of list) {
+      const st = curve.style ?? style;
+      if (st?.visible === false) continue;
+      ctx.strokeStyle = st?.color ?? '#2563eb';
+      // Clamp like every other layer: ABI + shader enforce [2.5, 6.0].
+      ctx.lineWidth = Number.isFinite(st?.widthPx) ? Math.min(6.0, Math.max(2.5, st.widthPx)) : 3.5;
+      // 2D parity with the GPU dash: 8px-on / 6px-off screen-space, solid resets.
+      ctx.setLineDash(st?.dashed ? [8, 6] : []);
+      ctx.lineDashOffset = 0;
+      ctx.beginPath();
+      let pen = false;
+      for (const [x, y] of curve.points ?? []) {
         if (y === null || y === undefined || Number.isNaN(y)) {
           pen = false;
           continue;
@@ -87,8 +95,8 @@
           ctx.lineTo(px, py);
         }
       }
+      ctx.stroke();
     }
-    ctx.stroke();
     ctx.setLineDash([]);
     ctx.lineDashOffset = 0;
 
@@ -188,6 +196,7 @@
 
   $effect(() => {
     // mark dirty on data changes; the loop presents
+    void curves;
     void points;
     void viewport;
     void grid;

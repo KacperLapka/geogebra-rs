@@ -1,9 +1,12 @@
 <script>
-  // Thin style controls for the single tracer curve `f` (E4-STYLE-STRUCT).
-  // Forwards to `setFunctionStyle` / `setFunctionVisibility`; same pattern
-  // as Sliders.svelte: validate here, App guards again. Dashed toggle is the
-  // 4.2 demo for f-solid vs f-prime-dashed; no palette UI (lands in 4.3).
-  let { colorHex, widthPx, dashed, visible, onStyle, onDashed, onVisibility } = $props();
+  // Per-curve style controls (4.3, E4-STYLE-STRUCT): one instance per demo
+  // curve, wired by App to `setFunctionStyle` / `setFunctionVisibility`.
+  // Same pattern as Sliders.svelte: validate here, App guards again.
+  let { curveId = 'f', colorHex, widthPx, dashed, visible, onStyle, onDashed, onVisibility } = $props();
+
+  const colorId = `style-color-${curveId}`;
+  const dashedId = `style-dashed-${curveId}`;
+  const visibleId = `style-visible-${curveId}`;
 
   function forwardStyle(hex) {
     if (typeof hex !== 'string' || !/^#[0-9a-fA-F]{6}$/.test(hex)) return;
@@ -12,33 +15,34 @@
 </script>
 
 <div class="style-controls">
-  <label for="style-color">curve colour</label>
+  <span class="curve-id" title="function id">{curveId}</span>
+  <label for={colorId}>curve colour</label>
   <input
-    id="style-color"
+    id={colorId}
     type="color"
     value={colorHex}
-    aria-label="curve colour"
+    aria-label="curve colour {curveId}"
     title="curve colour {colorHex}"
     oninput={(e) => forwardStyle(e.target.value)}
   />
   <span class="width-label" title="ribbon width in px">{Number(widthPx ?? 3.5).toFixed(1)} px</span>
-  <label for="style-dashed">
+  <label for={dashedId}>
     <input
-      id="style-dashed"
+      id={dashedId}
       type="checkbox"
       checked={dashed}
-      aria-label="dashed style"
+      aria-label="dashed style {curveId}"
       title="dashed style (derivative overlay demo)"
       onchange={(e) => onDashed(e.target.checked)}
     />
     dashed
   </label>
-  <label for="style-visible">
+  <label for={visibleId}>
     <input
-      id="style-visible"
+      id={visibleId}
       type="checkbox"
       checked={visible}
-      aria-label="curve visible"
+      aria-label="curve visible {curveId}"
       onchange={(e) => onVisibility(e.target.checked)}
     />
     visible

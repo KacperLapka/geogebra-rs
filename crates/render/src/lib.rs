@@ -13,7 +13,7 @@ pub mod viewport;
 
 pub use curve::{
     CURVE_VERTEX_STRIDE, CurveVertex, DEFAULT_WIDTH_PX, FunctionStyle, MAX_POINTS, MAX_WIDTH_PX,
-    MIN_WIDTH_PX, POLE_BREAK, TRACER_HEX, clamp_width, default_style, expand_ribbon,
+    MIN_WIDTH_PX, PALETTE_HEXES, POLE_BREAK, TRACER_HEX, clamp_width, default_style, expand_ribbon,
     for_function_index, hex_to_linear, sample_curve, sample_curve_adaptive, sample_points_f32,
 };
 pub use grid::{format_tick, grid_ticks, minor_ticks, tick_decimals, tick_step};

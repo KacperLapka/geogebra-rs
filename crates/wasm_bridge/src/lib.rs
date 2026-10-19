@@ -10,7 +10,8 @@
 //! `set_function_visibility`, `update_param`, `update_viewport`,
 //! `query_hover` (AD-5) plus `serialize_workspace` (workspace JSON owned
 //! shape for Epic 5) and tracer helpers `sample_points`,
-//! `set_canvas_size`, `gpu_status`, `set_gpu_status`.
+//! `sample_points_for` (4.3 per-id sampler), `set_canvas_size`,
+//! `gpu_status`, `set_gpu_status`.
 
 use std::collections::HashMap;
 use std::sync::{Mutex, OnceLock};
@@ -35,6 +36,9 @@ struct Session {
     /// Function id -> render-owned style (E4-STYLE-STRUCT). Auto-created on
     /// `set_function`; `visible=false` skips submission, never deletes.
     styles: HashMap<String, FunctionStyle>,
+    /// First-seen style order for the 8-colour cycle: `f` pinned to index 0,
+    /// other ids take first-seen order 1, 2, ... (`% 8` wraps).
+    style_order: Vec<String>,
     /// Slider-bound parameters.
     params: HashMap<String, f64>,
     viewport: Viewport,
@@ -53,6 +57,7 @@ impl Default for Session {
             functions: HashMap::new(),
             formulas: HashMap::new(),
             styles: HashMap::new(),
+            style_order: Vec::new(),
             params: HashMap::new(),
             viewport: Viewport::default(),
             viewport_revision: 0,
@@ -118,6 +123,20 @@ pub struct Workspace {
     pub params: HashMap<String, f64>,
     /// Viewport owned by the session; Svelte never holds its own copy (AD-5).
     pub viewport: ViewportDto,
+    /// Optional per-id style map (4.3, additive-only). Serialized alongside
+    /// when non-empty; missing (or null) reads as no custom style.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub style: Option<HashMap<String, StyleEntry>>,
+}
+
+/// JSON wire shape for one stored style in the workspace document.
+/// Hex stays `#RRGGBB` so the style setters can reapply it verbatim.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct StyleEntry {
+    pub color_hex: String,
+    pub width_px: f32,
+    pub dashed: bool,
+    pub visible: bool,
 }
 
 /// Workspace JSON budget owned by this epic for Epic 5 (R11): a tracer
@@ -168,19 +187,37 @@ fn set_function_core(id: &str, formula: &str) -> Result<ParseOk, ParseErr> {
     }
     s.formulas.insert(id.to_string(), formula.to_string());
     s.functions.insert(id.to_string(), expr);
+    // Ident gate before order tracking: only valid ids join the cycle.
+    if is_ident(id) {
+        ensure_style_order(&mut s, id);
+    }
     // Auto-default the render-owned style so the curve draws immediately.
-    s.styles
-        .entry(id.to_string())
-        .or_insert_with(|| default_style_for(id));
+    let style = default_style_for_ordered(&s, id);
+    s.styles.entry(id.to_string()).or_insert(style);
     Ok(ok)
 }
 
-/// Default style per id: the tracer curve `"f"` takes palette index 0.
-fn default_style_for(id: &str) -> FunctionStyle {
+/// Record first-seen order for the palette cycle. `"f"` pins to index 0 and
+/// never joins the order; callers validate with `is_ident` before calling.
+/// No ident check here — callers validate with `is_ident` before calling.
+fn ensure_style_order(s: &mut Session, id: &str) {
     if id == "f" {
-        for_function_index(0)
-    } else {
-        default_style()
+        return;
+    }
+    if !s.style_order.iter().any(|e| e == id) {
+        s.style_order.push(id.to_string());
+    }
+}
+
+/// Default style per id: the tracer curve `"f"` pins to palette index 0;
+/// other ids take first-seen order 1, 2, ...; unknown ids fall back to 0.
+fn default_style_for_ordered(s: &Session, id: &str) -> FunctionStyle {
+    if id == "f" {
+        return for_function_index(0);
+    }
+    match s.style_order.iter().position(|e| e == id) {
+        Some(pos) => for_function_index(pos + 1),
+        None => for_function_index(0),
     }
 }
 
@@ -218,21 +255,17 @@ fn set_function_style_core(
     dashed: bool,
 ) -> FunctionStyle {
     if !is_ident(id) {
-        return default_style_for(id);
+        return default_style();
     }
     let Some(rgb) = hex_to_linear(color_hex) else {
         let s = session().lock().unwrap();
-        return s
-            .styles
-            .get(id)
-            .copied()
-            .unwrap_or_else(|| default_style_for(id));
+        let fallback = default_style_for_ordered(&s, id);
+        return s.styles.get(id).copied().unwrap_or(fallback);
     };
     let mut s = session().lock().unwrap();
-    let entry = s
-        .styles
-        .entry(id.to_string())
-        .or_insert_with(|| default_style_for(id));
+    ensure_style_order(&mut s, id);
+    let fallback = default_style_for_ordered(&s, id);
+    let entry = s.styles.entry(id.to_string()).or_insert(fallback);
     entry.color = rgb;
     entry.width_px = clamp_width(width_px as f32);
     entry.dashed = dashed;
@@ -242,13 +275,12 @@ fn set_function_style_core(
 /// Visibility core: retains the entry, flips only the flag.
 fn set_function_visibility_core(id: &str, visible: bool) -> FunctionStyle {
     if !is_ident(id) {
-        return default_style_for(id);
+        return default_style();
     }
     let mut s = session().lock().unwrap();
-    let entry = s
-        .styles
-        .entry(id.to_string())
-        .or_insert_with(|| default_style_for(id));
+    ensure_style_order(&mut s, id);
+    let fallback = default_style_for_ordered(&s, id);
+    let entry = s.styles.entry(id.to_string()).or_insert(fallback);
     entry.visible = visible;
     *entry
 }
@@ -277,6 +309,53 @@ fn active_expr(s: &Session) -> Option<Expr> {
         return s.functions.values().next().cloned();
     }
     None
+}
+
+/// Convert linear-sRGB RGBA back to `#RRGGBB` for the workspace style map.
+fn linear_to_hex(c: [f32; 4]) -> String {
+    fn to_srgb(v: f32) -> u8 {
+        let s = if v <= 0.0031308 {
+            12.92 * v
+        } else {
+            1.055 * v.powf(1.0 / 2.4) - 0.055
+        };
+        (s.clamp(0.0, 1.0) * 255.0).round() as u8
+    }
+    format!(
+        "#{:02X}{:02X}{:02X}",
+        to_srgb(c[0]),
+        to_srgb(c[1]),
+        to_srgb(c[2])
+    )
+}
+
+fn style_entry(s: &FunctionStyle) -> StyleEntry {
+    StyleEntry {
+        color_hex: linear_to_hex(s.color),
+        width_px: s.width_px,
+        dashed: s.dashed,
+        visible: s.visible,
+    }
+}
+
+/// Per-id sample core: samples one function by id with its own style.
+/// Returns `None` for unknown ids; hidden styles yield no points but keep
+/// the entry. NaN y values serialize as `null` so the frontend breaks the
+/// polyline instead of drawing a vertical spike.
+fn sample_points_for_core(id: &str, n: usize) -> Option<Vec<(f64, Option<f64>)>> {
+    let s = session().lock().unwrap();
+    let expr = s.functions.get(id)?.clone();
+    if s.styles.get(id).map(|st| st.visible).unwrap_or(true) {
+        let n = n.clamp(2, 4000);
+        Some(
+            sample_curve(&expr, &s.params, &s.viewport, n)
+                .into_iter()
+                .map(|[x, y]| (x, if y.is_nan() { None } else { Some(y) }))
+                .collect(),
+        )
+    } else {
+        Some(Vec::new())
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -452,6 +531,19 @@ pub fn sample_points(n: usize) -> String {
     serde_json::to_string(&serde_json::json!({ "points": points, "params": params })).unwrap()
 }
 
+/// Per-id sampler (4.3, additive): sample one function by id with its own
+/// style. Shape matches [`sample_points`]: `{"points":[[x,y|null],...],
+/// "params":[...]}`. Unknown ids yield empty `points`; hidden styles yield
+/// empty `points` with the style entry retained.
+#[wasm_bindgen]
+pub fn sample_points_for(id: &str, n: usize) -> String {
+    let s = session().lock().unwrap();
+    let params: Vec<String> = s.params.keys().cloned().collect();
+    drop(s);
+    let points: Vec<(f64, Option<f64>)> = sample_points_for_core(id, n).unwrap_or_default();
+    serde_json::to_string(&serde_json::json!({ "points": points, "params": params })).unwrap()
+}
+
 /// Tracer helper: grid ticks for the current viewport.
 #[wasm_bindgen]
 pub fn grid_lines() -> String {
@@ -497,11 +589,22 @@ pub fn set_gpu_status(status: &str) {
 #[wasm_bindgen]
 pub fn serialize_workspace() -> String {
     let s = session().lock().unwrap();
+    let style = if s.styles.is_empty() {
+        None
+    } else {
+        Some(
+            s.styles
+                .iter()
+                .map(|(id, st)| (id.clone(), style_entry(st)))
+                .collect(),
+        )
+    };
     let ws = Workspace {
         version: 1,
         functions: s.formulas.clone(),
         params: s.params.clone(),
         viewport: ViewportDto::from(&s.viewport),
+        style,
     };
     serde_json::to_string(&ws).unwrap()
 }
@@ -838,5 +941,145 @@ mod tests {
         );
         let again: Workspace = parse_json(&serialize_workspace());
         assert_eq!(ws, again);
+    }
+
+    #[test]
+    fn cycle_assigns_f_g_h_in_order() {
+        let _guard = test_lock().lock().unwrap();
+        reset_session();
+        let _: ParseOk = parse_json(&set_function("f", "x^2"));
+        let _: ParseOk = parse_json(&set_function("g", "x^3"));
+        let _: ParseOk = parse_json(&set_function("h", "sin(x)"));
+        let s = session().lock().unwrap();
+        let f = s.styles.get("f").copied().unwrap();
+        let g = s.styles.get("g").copied().unwrap();
+        let h = s.styles.get("h").copied().unwrap();
+        drop(s);
+        assert_eq!(f, for_function_index(0));
+        assert_eq!(g, for_function_index(1));
+        assert_eq!(h, for_function_index(2));
+    }
+
+    #[test]
+    fn ninth_function_wraps_to_entry_zero() {
+        let _guard = test_lock().lock().unwrap();
+        reset_session();
+        let ids = ["f", "a", "b", "c", "d", "e", "g", "h", "i"];
+        for id in ids {
+            let _: ParseOk = parse_json(&set_function(id, "x"));
+        }
+        let s = session().lock().unwrap();
+        let ninth = s.styles.get("i").copied().unwrap();
+        drop(s);
+        // `f` pins 0; other ids take first-seen slots 1..8, so the ninth id
+        // wraps (`8 % 8 == 0`).
+        assert_eq!(ninth, for_function_index(8));
+        assert_eq!(ninth, for_function_index(0));
+    }
+
+    #[test]
+    fn invalid_id_never_joins_cycle_order() {
+        let _guard = test_lock().lock().unwrap();
+        reset_session();
+        let _: ParseOk = parse_json(&set_function("9bad", "x"));
+        let _: ParseOk = parse_json(&set_function("g", "x^2"));
+        let s = session().lock().unwrap();
+        assert!(!s.style_order.iter().any(|e| e == "9bad"));
+        assert_eq!(s.styles.get("g").copied().unwrap(), for_function_index(1));
+    }
+
+    #[test]
+    fn per_id_sampler_keeps_shape_and_respects_visibility() {
+        let _guard = test_lock().lock().unwrap();
+        reset_session();
+        let _: ParseOk = parse_json(&set_function("f", "x^2"));
+        let _: ParseOk = parse_json(&set_function("g", "x^3"));
+        // Shape matches `sample_points` exactly: `{points, params}` only.
+        let one: serde_json::Value = parse_json(&sample_points_for("f", 8));
+        assert_eq!(one.as_object().unwrap().len(), 2);
+        assert!(one.get("points").is_some() && one.get("params").is_some());
+        assert!(one.get("markers").is_none() && one.get("tangent").is_none());
+        assert_eq!(one["points"].as_array().unwrap().len(), 8);
+        let other: serde_json::Value = parse_json(&sample_points_for("g", 8));
+        assert_eq!(other["points"].as_array().unwrap().len(), 8);
+        // Unknown id yields empty points, never an error.
+        let missing: serde_json::Value = parse_json(&sample_points_for("zzz", 8));
+        assert!(missing["points"].as_array().unwrap().is_empty());
+        // Hidden curve samples nothing but retains its entry.
+        let _: StyleDto = parse_json(&set_function_visibility("g", false));
+        let hidden: serde_json::Value = parse_json(&sample_points_for("g", 8));
+        assert!(hidden["points"].as_array().unwrap().is_empty());
+        let shown: serde_json::Value = parse_json(&sample_points_for("f", 8));
+        assert!(!shown["points"].as_array().unwrap().is_empty());
+        let restored: StyleDto = parse_json(&set_function_visibility("g", true));
+        assert!(restored.visible);
+        let back: serde_json::Value = parse_json(&sample_points_for("g", 8));
+        assert!(!back["points"].as_array().unwrap().is_empty());
+    }
+
+    #[test]
+    fn per_id_sampler_preserves_pole_breaks() {
+        let _guard = test_lock().lock().unwrap();
+        reset_session();
+        let _: ParseOk = parse_json(&set_function("f", "x^2"));
+        let _: ParseOk = parse_json(&set_function("g", "1/x"));
+        update_viewport(-1.0, 1.0, -10.0, 10.0);
+        // Odd count puts a sample exactly at x=0 where 1/x diverges.
+        let sample: serde_json::Value = parse_json(&sample_points_for("g", 65));
+        let pts = sample["points"].as_array().unwrap();
+        // NaN serializes as null: the pole break survives per-id sampling.
+        assert!(pts.iter().any(|p| p[1].is_null()));
+        assert!(pts.iter().all(|p| {
+            p[1].is_null()
+                || p[1]
+                    .as_f64()
+                    .map(|y| y.abs() <= POLE_BREAK)
+                    .unwrap_or(false)
+        }));
+    }
+
+    #[test]
+    fn style_map_omitted_when_empty_and_round_trips() {
+        let _guard = test_lock().lock().unwrap();
+        reset_session();
+        let raw = serialize_workspace();
+        let v: serde_json::Value = parse_json(&raw);
+        assert!(v.get("style").is_none(), "empty map must omit `style`");
+        let ws: Workspace = parse_json(&raw);
+        assert_eq!(ws.style, None);
+
+        let _: ParseOk = parse_json(&set_function("f", "x^2"));
+        let _: StyleDto = parse_json(&set_function_style("f", "#E69F00", 4.0, true));
+        let raw = serialize_workspace();
+        let v: serde_json::Value = parse_json(&raw);
+        assert_eq!(v["style"]["f"]["color_hex"], "#E69F00");
+        assert_eq!(v["style"]["f"]["width_px"], 4.0);
+        assert_eq!(v["style"]["f"]["dashed"], true);
+        // Missing map reads as no custom style; explicit null too.
+        let bare = r#"{"version":1,"functions":{"f":"x^2"},"params":{},"viewport":{"x_min":-10.0,"x_max":10.0,"y_min":-10.0,"y_max":10.0}}"#;
+        let ws: Workspace = parse_json(bare);
+        assert_eq!(ws.style, None);
+        let nulled = r#"{"version":1,"functions":{"f":"x^2"},"params":{},"viewport":{"x_min":-10.0,"x_max":10.0,"y_min":-10.0,"y_max":10.0},"style":null}"#;
+        let ws: Workspace = parse_json(nulled);
+        assert_eq!(ws.style, None);
+        // Style entries reapply through the existing setters verbatim.
+        let styled: Workspace = parse_json(&raw);
+        reset_session();
+        for (id, formula) in &styled.functions {
+            let _: ParseOk = parse_json(&set_function(id, formula));
+        }
+        for (id, entry) in styled.style.clone().unwrap() {
+            let back: StyleDto = parse_json(&set_function_style(
+                &id,
+                &entry.color_hex,
+                entry.width_px as f64,
+                entry.dashed,
+            ));
+            assert!((back.width_px - entry.width_px).abs() < 1e-6);
+            assert_eq!(back.dashed, entry.dashed);
+            let _: StyleDto = parse_json(&set_function_visibility(&id, entry.visible));
+        }
+        let again: Workspace = parse_json(&serialize_workspace());
+        assert_eq!(styled, again);
     }
 }
