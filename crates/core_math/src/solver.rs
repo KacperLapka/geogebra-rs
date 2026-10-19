@@ -95,8 +95,11 @@ pub fn brent(
     let mut d = a;
     let mut mflag = true;
     for _ in 0..max_iter {
-        if fb == 0.0 || (b - a).abs() < tol {
+        if fb == 0.0 {
             return Some(b);
+        }
+        if (b - a).abs() < tol {
+            return if fb.abs() < 1e-9 { Some(b) } else { None };
         }
         let mut s = if fa != fc && fb != fc {
             // inverse quadratic interpolation
@@ -191,6 +194,38 @@ pub fn scan_sign_changes(
     out
 }
 
+/// Find all real roots of `expr` in `[x_min, x_max]` as markers.
+///
+/// Viewport scan via [`scan_sign_changes`] plus [`brent`] refine at `tol`.
+/// Brackets that converge with large residual (pole jumps) emit nothing,
+/// and near-duplicate refinements (exact-zero samples) collapse to one marker.
+pub fn find_roots(
+    expr: &Expr,
+    params: &HashMap<String, f64>,
+    x_min: f64,
+    x_max: f64,
+    steps: usize,
+    tol: f64,
+) -> Vec<Marker> {
+    let mut roots = Vec::new();
+    for (a, b) in scan_sign_changes(expr, params, x_min, x_max, steps) {
+        if let Some(r) = brent(|x| expr.eval(x, params), a, b, tol, 100) {
+            if !r.is_finite() {
+                continue;
+            }
+            let y = expr.eval(r, params);
+            if !y.is_finite() || y.abs() > 1e-9 {
+                continue;
+            }
+            if roots.iter().any(|m: &Marker| (m.x - r).abs() < 1e-9) {
+                continue;
+            }
+            roots.push(Marker::new(MarkerKind::Root, r, y));
+        }
+    }
+    roots
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -275,6 +310,91 @@ mod tests {
         for dx in [-0.5, 0.0, 1.0] {
             let got = tangent_at(&f, &params, x0, x0 + dx);
             assert!((got - (2.0 + 4.0 * dx)).abs() < 1e-12, "dx={dx}: got {got}");
+        }
+    }
+
+    #[test]
+    fn finds_all_cubic_roots_in_viewport() {
+        // f(x) = x^3 - 3x → roots -√3, 0, √3 (entry 2.2 verify: cubic).
+        let expr = parse("x^3-3*x").unwrap();
+        let params = HashMap::new();
+        let markers = find_roots(&expr, &params, -3.0, 3.0, 200, 1e-12);
+        assert_eq!(markers.len(), 3, "brackets: {markers:?}");
+        let s3 = 3.0f64.sqrt();
+        for want in [-s3, 0.0, s3] {
+            let m = markers
+                .iter()
+                .min_by(|a, b| {
+                    (a.x - want)
+                        .abs()
+                        .partial_cmp(&(b.x - want).abs())
+                        .unwrap()
+                })
+                .unwrap();
+            assert!(
+                (m.x - want).abs() < 1e-12,
+                "root near {want}: got {}",
+                m.x
+            );
+            assert!(
+                m.y.abs() < 1e-12,
+                "residual at {}: got {}",
+                m.x,
+                m.y
+            );
+            assert_eq!(m.kind, MarkerKind::Root);
+        }
+    }
+
+    #[test]
+    fn finds_trig_roots_across_viewport() {
+        // sin(x) on [-7, 7] → roots -2π, -π, 0, π, 2π (trig half of verify).
+        let expr = parse("sin(x)").unwrap();
+        let params = HashMap::new();
+        let markers = find_roots(&expr, &params, -7.0, 7.0, 400, 1e-12);
+        assert_eq!(markers.len(), 5, "markers: {markers:?}");
+        let pi = std::f64::consts::PI;
+        for want in [-2.0 * pi, -pi, 0.0, pi, 2.0 * pi] {
+            let m = markers
+                .iter()
+                .min_by(|a, b| {
+                    (a.x - want)
+                        .abs()
+                        .partial_cmp(&(b.x - want).abs())
+                        .unwrap()
+                })
+                .unwrap();
+            assert!(
+                (m.x - want).abs() < 1e-12,
+                "root near {want}: got {}",
+                m.x
+            );
+            assert!(m.y.abs() < 1e-12, "residual at {}: {}", m.x, m.y);
+        }
+    }
+
+    #[test]
+    fn pole_jumps_emit_no_markers() {
+        let params = HashMap::new();
+        // 1/x diverges at 0: no marker even on a dense viewport scan.
+        let recip = parse("1/x").unwrap();
+        assert!(find_roots(&recip, &params, -1.0, 1.0, 100, 1e-12).is_empty());
+        // tan(x) has true zeros at -π, 0, π but poles at ±π/2: only zeros emit.
+        let tan = parse("tan(x)").unwrap();
+        let markers = find_roots(&tan, &params, -3.2, 3.2, 400, 1e-12);
+        let pi = std::f64::consts::PI;
+        assert_eq!(markers.len(), 3, "markers: {markers:?}");
+        for want in [-pi, 0.0, pi] {
+            assert!(
+                markers.iter().any(|m| (m.x - want).abs() < 1e-12),
+                "missing tan zero near {want}: {markers:?}"
+            );
+        }
+        for pole in [-pi / 2.0, pi / 2.0] {
+            assert!(
+                markers.iter().all(|m| (m.x - pole).abs() > 1e-6),
+                "pole marker near {pole}: {markers:?}"
+            );
         }
     }
 }
