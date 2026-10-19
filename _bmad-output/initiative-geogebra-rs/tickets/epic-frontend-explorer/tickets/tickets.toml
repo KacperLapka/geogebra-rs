@@ -121,3 +121,14 @@ covers = ["R1", "R2", "R3", "R4", "R5", "R6", "R7", "R8", "R9", "R10", "R11", "R
 after = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
 hitl = false
 risk = "low"
+
+[[entry]]
+id = 12
+type = "bug"
+title = "Markers float off the curve"
+description = "Root and extrema DOM markers appear offset from the drawn curve instead of centered on it with matching tooltip coordinates."
+verify = "Analyze x^3-3x+1 shows markers centered on the curve with tooltips agreeing with curve values, and markers stay pinned during pan and zoom."
+covers = ["R5", "R6"]
+after = [2]
+hitl = false
+risk = "high"
