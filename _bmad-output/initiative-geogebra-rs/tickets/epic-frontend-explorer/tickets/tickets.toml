@@ -1,0 +1,123 @@
+# Function explorer frontend — epic story breakdown, in build order.
+# Table order is build order. `id` is permanent, never reused.
+
+[[entry]]
+id = 1
+type = "spike"
+title = "Spike: DOM-overlay sync at 60 FPS"
+description = "Enables entry 2 R5 and R6 and delivers nothing itself: time-boxed spike proves DOM button positioning over canvas geometry from the query_hover overlay shape without layout thrash and records the sync technique or the dead-ends tried."
+verify = "Spike note names the positioning technique with measured frame cost or the dead-ends ruled out."
+covers = []
+after = ["1.2", "2.6"]
+hitl = false
+risk = "medium"
+
+[[entry]]
+id = 2
+type = "story"
+title = "Tracer: Analyze loop with single curve and marker buttons"
+description = "Thinnest path through every layer the epic touches: type e^(0.5x), Analyze fires WASM, indigo f lands on a minimal canvas mount, root and extremum DOM buttons appear with tooltips. R1 happy-path fire only; R5 and R6 working buttons only; R8 minimal mount plus single indigo curve only (fallback indigo via scaffold pipeline; full palette lands in entry 8). A person sees the explorer working in the dev server."
+verify = "A person types e^(0.5x), hits Analyze, and sees the indigo solid curve with root versus extrema and inflection buttons visually distinct showing coordinate tooltips; a marker-free view stays silent."
+covers = ["R1", "R5", "R6", "R8"]
+after = [1, "1.2", "2.6"]
+hitl = true
+risk = "high"
+
+[[entry]]
+id = 3
+type = "story"
+title = "Function bar with errors and Try chips"
+description = "R1 validation and errors part: char-exact errors within 50 ms block Analyze, the clear control empties to the empty state, Try chips fill and fire immediately, and errors hold the last good canvas."
+verify = "Enter fires analysis; a mistyped character shows its caret error with Analyze disabled holding the last good canvas and clears within 50 ms of the fix; each Try chip fills the bar and analyzes."
+covers = ["R1"]
+after = [2]
+hitl = false
+risk = "low"
+
+[[entry]]
+id = 4
+type = "story"
+title = "Single-function wiring with param sliders"
+description = "Removes the g and h demo curves and wires single primary f: parameter rows appear under the function bar only when the expression contains parameters and dragging re-renders curves and values eval-only without refiring symbolic analysis."
+verify = "Loading a*x^2+b shows a and b sliders that reshape the single curve live; a parameter-free expression hides the slider row."
+covers = ["R2"]
+after = [2, 3]
+hitl = false
+risk = "medium"
+
+[[entry]]
+id = 5
+type = "story"
+title = "Derivative card with CALCULATED badge"
+description = "Shows the symbolic fprime readout from WASM with the CALCULATED badge only on fresh values plus the always-on toggleable fdouble line in DESIGN purple."
+verify = "After Analyze the card shows fprime with the CALCULATED badge and a toggleable fdouble line; stale or error states hide the badge."
+covers = ["R3"]
+after = [2, "2.1"]
+hitl = false
+risk = "low"
+
+[[entry]]
+id = 6
+type = "story"
+title = "Point slider with value rows and pole readout"
+description = "Point slider over the current x-domain drives the tangent marker at x0 with live function value, slope to 3 decimals, behavior word, and tangent line at 60 FPS with arrow-key operation. R7 pole em-dash readout only."
+verify = "Dragging the x-slider updates value rows with slope to 3 decimals plus behavior and tangent at 60 FPS and arrow keys move plus-or-minus 0.1; at x equals 0 on 1/x the rows show an em-dash."
+covers = ["R4", "R7"]
+after = [2, "2.1", "2.6"]
+hitl = false
+risk = "medium"
+
+[[entry]]
+id = 7
+type = "story"
+title = "Canvas mount with pan, zoom, asymptotes, and fallback"
+description = "Extends the tracer minimal mount into the full mount: canvas mounts the wgpu pipeline, pan by drag and zoom by wheel, buttons, or reset update the domain label and re-render the visible domain without refiring analysis; poles break curves with gray dashed asymptotes; the fallback message shows only when WebGPU and WebGL2 adapters both fail leaving the rest usable. R7 gray-dash breaks; R8 full mount, pan, zoom, and fallback; R9 viewport."
+verify = "Panning and zooming update the domain label with analysis intact and reset restores the default domain; 1/x breaks at zero with a gray dashed asymptote; the fallback message appears only on double failure with the rest of the workspace usable."
+covers = ["R7", "R8", "R9"]
+after = [2, "3.1", "4.4"]
+hitl = false
+risk = "medium"
+
+[[entry]]
+id = 8
+type = "story"
+title = "Legend with fixed palette and canvas-only toggles"
+description = "Consumes the entry 7 full mount: applies the fixed DESIGN mapping of indigo f solid, green fprime dashed, amber tangent dashed, purple fdouble dashed, and gray asymptotes with legend swatches mirroring curve style; toggles for f, fprime, fdouble, tangent, and markers re-render the canvas only without refiring analysis, single primary plus auto curves only."
+verify = "Toggling any layer updates only the canvas with analysis retained; legend swatches match the indigo, green, amber, purple, and gray curve styles exactly."
+covers = ["R10"]
+after = [2, 7, "4.3"]
+hitl = false
+risk = "low"
+
+[[entry]]
+id = 9
+type = "story"
+title = "Share row with copy, restore, and offline states"
+description = "Share row appears after the first successful Analyze with a readonly shortlink and Copy confirming inline; opening a shortlink restores expression, slider positions, and toggles to the identical session with inline retry leaving analysis untouched and cached-expression offline behavior."
+verify = "Copying yields an 8-character link that restores expression plus sliders plus toggles identically on a second load with inline Copied confirmation; a failed copy offers retry with analysis untouched and offline shows the disabled note."
+covers = ["R11", "R12"]
+after = [2, 4, 6, 8, "5.1"]
+hitl = false
+risk = "low"
+
+[[entry]]
+id = 10
+type = "story"
+title = "Keyboard, live regions, and reduced-motion pass"
+description = "Workspace-wide accessibility pass: focus order from input through Analyze, chips, params, toggles, point slider, markers, to share copy with 44 px marker targets via hit padding, full slider and marker keyboard operation, aria-live value announcements on release, and reduced-motion snapping."
+verify = "A full keyboard walkthrough from input to share copy works with screen-reader announcements on slider release, visible marker focus with labels, and no transitions when reduced motion is preferred."
+covers = ["R13"]
+after = [3, 4, 5, 6, 7, 8, 9]
+hitl = false
+risk = "medium"
+
+[[entry]]
+id = 11
+type = "story"
+title = "Refactor sweep"
+description = "Cleanup only from plans and review findings this epic deferred; scope pushed out of another story becomes a new story."
+verify = "Deferred cleanup items are resolved with no behavior change; remaining scope is either done or filed as new stories."
+covers = ["R1", "R2", "R3", "R4", "R5", "R6", "R7", "R8", "R9", "R10", "R11", "R12", "R13"]
+after = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+hitl = false
+risk = "low"

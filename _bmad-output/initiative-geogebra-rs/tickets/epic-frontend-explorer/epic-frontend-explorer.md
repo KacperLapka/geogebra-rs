@@ -89,5 +89,6 @@ For students and lecturers, the explorer delivers the friendly single-function w
 - Decision (2026-10-19): Time-boxed spike first for DOM-overlay sync at 60 FPS; tracer second.
 - Decision (2026-10-19): f'' always auto-renders toggleable dashed purple.
 - Decision (2026-10-19): Verification harness left to stories with per-story runnable checks plus a closing accessibility and performance pass.
+- Decision (2026-10-19): Planning tracer is entry 2 Analyze loop with single curve and marker buttons (hitl dev-server check); entry 1 is the time-boxed DOM-sync spike per user override of the tracer-first rule; mount handoff is tracer minimal via scaffold pipeline, entry 7 extends the full mount.
 - Assumption: Contrast ratios target WCAG AA but are unmeasured; verify before build closes accessibility.
 - Assumption: Sub-1024 px widths fall back to horizontal scroll; no mobile reflow in this run.
