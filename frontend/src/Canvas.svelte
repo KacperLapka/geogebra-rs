@@ -4,7 +4,9 @@
   // `points`/`style` props still work: they render as one curve.
   // Calculus overlays (2.6): `markers` is `[{kind, x, y}]` and `tangent` is
   // `{from, to}` in math coords, stroked verbatim from Rust (AD-4).
-  let { curves, points, viewport, grid, hover, style, markers, tangent, onViewport, onHover, onLeave, onSize, onFps, children } = $props();
+  // Vertical asymptotes (3.1): `asymptotes` is `[{x, from, to}]` in math
+  // coords, stroked dashed verbatim from Rust.
+  let { curves, points, viewport, grid, hover, style, markers, tangent, asymptotes, onViewport, onHover, onLeave, onSize, onFps, children } = $props();
 
   let canvas = $state(null);
   let ctx = $state(null);
@@ -117,6 +119,26 @@
         ctx.stroke();
       }
     }
+
+    // vertical asymptotes (3.1): Rust-computed x with viewport-spanning
+    // endpoints stroked verbatim, dashed [8,6] like the curve dash parity.
+    for (const a of asymptotes ?? []) {
+      if (!a || !Array.isArray(a.from) || !Array.isArray(a.to)) continue;
+      if (!Number.isFinite(a.x)) continue;
+      const [ax, ay] = toScreen(a.from[0], a.from[1], w, h);
+      const [bx, by] = toScreen(a.to[0], a.to[1], w, h);
+      if (![ax, ay, bx, by].every(Number.isFinite)) continue;
+      ctx.strokeStyle = '#6b7280';
+      ctx.lineWidth = 1.5;
+      ctx.setLineDash([8, 6]);
+      ctx.lineDashOffset = 0;
+      ctx.beginPath();
+      ctx.moveTo(ax, ay);
+      ctx.lineTo(bx, by);
+      ctx.stroke();
+    }
+    ctx.setLineDash([]);
+    ctx.lineDashOffset = 0;
 
     // marker circles (2.6): per-kind fill, white ring for contrast.
     const MARKER_COLORS = { root: '#dc2626', min: '#16a34a', max: '#d97706', inflection: '#9333ea' };
@@ -237,6 +259,7 @@
     void style;
     void markers;
     void tangent;
+    void asymptotes;
     dirty = true;
   });
 </script>

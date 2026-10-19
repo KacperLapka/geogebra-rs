@@ -25,6 +25,7 @@
   let x0 = $state(1.0);
   let markers = $state([]);
   let tangent = $state(null);
+  let asymptotes = $state([]);
   let curves = $state([]);
   let grid = $state({ x: [], y: [] });
   let viewport = $state({ x_min: -10, x_max: 10, y_min: -10, y_max: 10 });
@@ -71,15 +72,18 @@
       style: nextStyles[id] ?? { ...FALLBACK_STYLE }
     }));
     // Calculus overlays from the Rust `sample_points` (2.6, additive-only):
-    // viewport-scoped markers + the `x0` tangent segment. Stale bundles
-    // without the fields read as empty overlays, never a crash.
+    // viewport-scoped markers + the `x0` tangent segment + vertical
+    // asymptotes (3.1). Stale bundles without the fields read as empty
+    // overlays, never a crash.
     try {
       const overlay = backend.samplePoints(240);
       markers = overlay.markers ?? [];
       tangent = overlay.tangent ?? null;
+      asymptotes = overlay.asymptotes ?? [];
     } catch {
       markers = [];
       tangent = null;
+      asymptotes = [];
     }
     const known = {};
     for (const name of Object.keys(ws.params ?? {})) {
@@ -382,6 +386,7 @@
     {hover}
     {markers}
     {tangent}
+    {asymptotes}
     onViewport={handleViewport}
     onHover={handleHover}
     onLeave={() => (hover = null)}

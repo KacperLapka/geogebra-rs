@@ -226,6 +226,145 @@ pub fn find_roots(
     roots
 }
 
+/// Find pole x-coordinates of `expr` in `[x_min, x_max]`.
+///
+/// Complement of [`scan_sign_changes`]: the same `|f| > POLE_THRESHOLD`
+/// magnitude plus opposite-sign jump, with a Brent-residual second layer.
+/// Every strict sign-change bracket (finite or infinite endpoints, exact
+/// zeros excluded) is probed: brackets that refine via [`brent`] on `f`
+/// with `1e-9` residual are true roots and skipped; the rest refine via
+/// [`brent`] on the reciprocal `g = 1/f` (whose zero is the pole) with a
+/// bisection fallback. Non-finite (`NaN`) samples never emit.
+///
+/// Returns refined x-coordinates, deduped at `1e-9`. `1/x` over `[-1,1]`
+/// yields one x within `1e-9` of `0`; `x^2` and `sin` yield empty.
+///
+/// Negated comparisons are deliberate NaN-safe ordering: non-finite
+/// bounds and steps must take the early return.
+#[allow(clippy::neg_cmp_op_on_partial_ord)]
+pub fn find_poles(
+    expr: &Expr,
+    params: &HashMap<String, f64>,
+    x_min: f64,
+    x_max: f64,
+    steps: usize,
+    tol: f64,
+) -> Vec<f64> {
+    if !x_min.is_finite() || !x_max.is_finite() || !(x_min < x_max) {
+        return Vec::new();
+    }
+    let steps = steps.max(1);
+    let dx = (x_max - x_min) / steps as f64;
+    if !dx.is_finite() || !(dx > 0.0) {
+        return Vec::new();
+    }
+    let tol = if tol.is_finite() && tol > 0.0 {
+        tol
+    } else {
+        1e-12
+    };
+    // Collect strict sign-jump brackets (inverse of `scan_sign_changes`
+    // pole-skip): exact zeros are root touches, never poles; `NaN` has no
+    // sign and is skipped, never emitted.
+    let mut brackets: Vec<(f64, f64)> = Vec::new();
+    let mut prev_x = x_min;
+    let mut prev_y = expr.eval(prev_x, params);
+    for i in 1..=steps {
+        let x = x_min + dx * i as f64;
+        let y = expr.eval(x, params);
+        if !prev_y.is_nan()
+            && !y.is_nan()
+            && prev_y != 0.0
+            && y != 0.0
+            && prev_y.signum() != y.signum()
+        {
+            brackets.push((prev_x, x));
+        }
+        prev_x = x;
+        prev_y = y;
+    }
+    let mut poles = Vec::new();
+    for (a, b) in brackets {
+        // First layer: true roots refine on `f` with small residual.
+        let is_root = brent(|x| expr.eval(x, params), a, b, tol, 100)
+            .map(|r| {
+                let y = expr.eval(r, params);
+                y.is_finite() && y.abs() <= 1e-9
+            })
+            .unwrap_or(false);
+        if is_root {
+            continue;
+        }
+        // Second layer: pole refines on reciprocal `g = 1/f`.
+        let refined = brent(|x| 1.0 / expr.eval(x, params), a, b, tol, 100)
+            .filter(|r| r.is_finite())
+            .or_else(|| bisect_sign_jump(expr, params, a, b, tol));
+        if let Some(r) = refined {
+            if !r.is_finite() || r < x_min || r > x_max {
+                continue;
+            }
+            let fr = expr.eval(r, params);
+            if fr.is_nan() {
+                continue;
+            }
+            let gr = 1.0 / fr;
+            let not_root = !(fr.is_finite() && fr.abs() <= 1e-9);
+            let pole_like = !fr.is_finite()
+                || fr.abs() > POLE_THRESHOLD
+                || (gr.is_finite() && gr.abs() < 1e-6);
+            if not_root
+                && pole_like
+                && poles.iter().all(|prev: &f64| (*prev - r).abs() >= 1e-9)
+            {
+                poles.push(r);
+            }
+        }
+    }
+    poles
+}
+
+/// Bisection fallback for a sign-jump bracket: narrow the sign change to
+/// `tol` width and return the midpoint. Returns `None` on exact-zero
+/// midpoint (a root, not a pole) or `NaN` samples.
+fn bisect_sign_jump(
+    expr: &Expr,
+    params: &HashMap<String, f64>,
+    a: f64,
+    b: f64,
+    tol: f64,
+) -> Option<f64> {
+    let mut lo = a;
+    let mut hi = b;
+    let mut flo = expr.eval(lo, params);
+    if flo.is_nan() || flo == 0.0 {
+        return None;
+    }
+    for _ in 0..100 {
+        if !lo.is_finite() || !hi.is_finite() {
+            return None;
+        }
+        if (hi - lo).abs() < tol {
+            break;
+        }
+        let mid = 0.5 * (lo + hi);
+        if !mid.is_finite() {
+            return None;
+        }
+        let fm = expr.eval(mid, params);
+        if fm.is_nan() || fm == 0.0 {
+            return None;
+        }
+        if flo.signum() != fm.signum() {
+            hi = mid;
+        } else {
+            lo = mid;
+            flo = fm;
+        }
+    }
+    let r = 0.5 * (lo + hi);
+    if r.is_finite() { Some(r) } else { None }
+}
+
 /// Shared scan-refine-filter-dedup pipeline for derived-expression zeros.
 ///
 /// Mirrors [`find_roots`] exactly: [`scan_sign_changes`] brackets plus
@@ -634,5 +773,28 @@ mod tests {
         let params = HashMap::new();
         assert!(find_extrema(&expr, &params, -1.0, 1.0, 100, 1e-12).is_empty());
         assert!(find_inflections(&expr, &params, -1.0, 1.0, 100, 1e-12).is_empty());
+    }
+
+    #[test]
+    fn poles_detect_reciprocal_but_not_parabola_or_sine() {
+        // 1/x over [-1,1] → single pole within 1e-9 of 0.
+        let params = HashMap::new();
+        let recip = parse("1/x").unwrap();
+        let poles = find_poles(&recip, &params, -1.0, 1.0, 200, 1e-12);
+        assert_eq!(poles.len(), 1, "poles: {poles:?}");
+        assert!(
+            (poles[0] - 0.0).abs() < 1e-9,
+            "pole x: got {}",
+            poles[0]
+        );
+        // x^2 never jumps sign: no poles.
+        let parab = parse("x^2").unwrap();
+        assert!(find_poles(&parab, &params, -1.0, 1.0, 200, 1e-12).is_empty());
+        // sin(x) sign jumps are true roots (Brent residual small): no poles.
+        let sin = parse("sin(x)").unwrap();
+        assert!(find_poles(&sin, &params, -7.0, 7.0, 400, 1e-12).is_empty());
+        // Non-finite samples never emit: degenerate viewport is empty.
+        assert!(find_poles(&recip, &params, 1.0, -1.0, 100, 1e-12).is_empty());
+        assert!(find_poles(&recip, &params, f64::NAN, 1.0, 100, 1e-12).is_empty());
     }
 }

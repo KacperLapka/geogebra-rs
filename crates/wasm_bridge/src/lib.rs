@@ -16,10 +16,10 @@
 use std::collections::HashMap;
 use std::sync::{Mutex, OnceLock};
 
-use core_math::{find_extrema, find_inflections, find_roots, parse, Expr, MarkerKind, Span};
+use core_math::{find_extrema, find_inflections, find_poles, find_roots, parse, Expr, MarkerKind, Span};
 use render::{
     clamp_width, default_style, for_function_index, grid_ticks, hex_to_linear, sample_curve,
-    tangent_segment, FunctionStyle, GpuStatus, Viewport, POLE_BREAK,
+    tangent_segment, vertical_asymptote_segment, FunctionStyle, GpuStatus, Viewport, POLE_BREAK,
 };
 use serde::{Deserialize, Serialize};
 use wasm_bindgen::prelude::*;
@@ -134,6 +134,18 @@ pub struct TangentDto {
     pub to: [f64; 2],
 }
 
+/// Vertical asymptote overlay for `sample_points` (3.1, additive-only).
+///
+/// `x` is the pole-x from the solver; `from`/`to` are viewport-spanning
+/// vertical endpoints `[x,y_min] -> [x,y_max]`. Carries stories 2-4
+/// Horizontal/Slant without a second ABI addition.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct AsymptoteDto {
+    pub x: f64,
+    pub from: [f64; 2],
+    pub to: [f64; 2],
+}
+
 fn marker_kind_str(kind: MarkerKind) -> &'static str {
     match kind {
         MarkerKind::Root => "root",
@@ -205,6 +217,48 @@ fn tangent_for(
         from: seg.from,
         to: seg.to,
     })
+}
+
+/// Vertical asymptote overlay from solver pole-x detection (3.1).
+///
+/// Mirrors [`collect_markers`]: viewport-scoped [`find_poles`] (~200 scan
+/// steps) mapped through [`vertical_asymptote_segment`]. Non-finite pole-x
+/// and degenerate viewports yield nothing; the caller then emits an empty
+/// list with curve + markers untouched. Hidden curves never reach here.
+fn collect_verticals(
+    expr: &Expr,
+    params: &HashMap<String, f64>,
+    viewport: &Viewport,
+) -> Vec<AsymptoteDto> {
+    const STEPS: usize = 200;
+    const TOL: f64 = 1e-12;
+    let mut out = Vec::new();
+    for x in find_poles(expr, params, viewport.x_min, viewport.x_max, STEPS, TOL) {
+        if !x.is_finite() {
+            continue;
+        }
+        if x < viewport.x_min || x > viewport.x_max {
+            continue;
+        }
+        if let Some(seg) = vertical_asymptote_segment(x, viewport) {
+            if !seg.from.iter().all(|v| v.is_finite())
+                || !seg.to.iter().all(|v| v.is_finite())
+            {
+                continue;
+            }
+            out.push(AsymptoteDto {
+                x: seg.x,
+                from: seg.from,
+                to: seg.to,
+            });
+        }
+    }
+    out.retain(|d| {
+        d.x.is_finite()
+            && d.from.iter().all(|v| v.is_finite())
+            && d.to.iter().all(|v| v.is_finite())
+    });
+    out
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -637,7 +691,8 @@ pub fn query_hover(px_x: f64, px_y: f64) -> String {
 /// Tracer helper: sample the active function across the viewport.
 ///
 /// Returns `{"points":[[x,y|null],...],"params":[...],"markers":[{kind,x,y},...],
-/// "tangent":{x0,y0,slope,from,to}|null}`. `markers`/`tangent` are additive:
+/// "tangent":{x0,y0,slope,from,to}|null,"asymptotes":[{x,from,to},...]}`.
+/// `markers`/`tangent`/`asymptotes` are additive:
 /// existing `points`/`params` fields are byte-identical. Superseded by the
 /// wgpu vertex-buffer path in stories 1.2/1.4 for curves, but the overlay
 /// fields feed the live 2D canvas.
@@ -658,12 +713,17 @@ pub fn sample_points(n: usize) -> String {
         }
         Some(_) | None => Vec::new(),
     };
-    let (markers, tangent): (Vec<MarkerDto>, Option<TangentDto>) = match expr.as_ref() {
+    let (markers, tangent, asymptotes): (
+        Vec<MarkerDto>,
+        Option<TangentDto>,
+        Vec<AsymptoteDto>,
+    ) = match expr.as_ref() {
         Some(e) if visible => (
             collect_markers(e, &params_map, &viewport),
             tangent_for(e, &params_map, &viewport),
+            collect_verticals(e, &params_map, &viewport),
         ),
-        _ => (Vec::new(), None),
+        _ => (Vec::new(), None, Vec::new()),
     };
     let params: Vec<String> = s.params.keys().cloned().collect();
     serde_json::to_string(&serde_json::json!({
@@ -671,6 +731,7 @@ pub fn sample_points(n: usize) -> String {
         "params": params,
         "markers": markers,
         "tangent": tangent,
+        "asymptotes": asymptotes,
     }))
     .unwrap()
 }
@@ -1340,5 +1401,52 @@ mod tests {
         assert!(tangent.is_object(), "tangent: {tangent}");
         assert!((tangent["y0"].as_f64().unwrap() - 1.0).abs() < 1e-12);
         assert!((tangent["slope"].as_f64().unwrap() + 1.0).abs() < 1e-12);
+    }
+
+    #[test]
+    fn reciprocal_carries_single_vertical_asymptote() {
+        let _guard = test_lock().lock().unwrap();
+        reset_session();
+        let _: ParseOk = parse_json(&set_function("f", "1/x"));
+        update_viewport(-1.0, 1.0, -10.0, 10.0);
+        let sample: serde_json::Value = parse_json(&sample_points(257));
+        // Curve splits: at least one null (NaN break), finite within 1e6.
+        let pts = sample["points"].as_array().unwrap();
+        assert!(pts.iter().any(|p| p[1].is_null()));
+        assert!(pts.iter().all(|p| {
+            p[1].is_null() || p[1].as_f64().map(|y| y.abs() <= POLE_BREAK).unwrap_or(false)
+        }));
+        // One vertical asymptote at x≈0 spanning the viewport.
+        let asym = sample["asymptotes"].as_array().unwrap();
+        assert_eq!(asym.len(), 1, "asymptotes: {asym:?}");
+        let x = asym[0]["x"].as_f64().unwrap();
+        assert!(x.abs() < 1e-9, "x: {x}");
+        let from = asym[0]["from"].as_array().unwrap();
+        let to = asym[0]["to"].as_array().unwrap();
+        assert!((from[0].as_f64().unwrap() - x).abs() < 1e-12);
+        assert!((to[0].as_f64().unwrap() - x).abs() < 1e-12);
+        assert!((from[1].as_f64().unwrap() + 10.0).abs() < 1e-12);
+        assert!((to[1].as_f64().unwrap() - 10.0).abs() < 1e-12);
+        // Existing fields unchanged: points + markers + tangent present.
+        assert!(sample.get("points").is_some());
+        assert!(sample.get("markers").is_some());
+        assert!(sample.get("tangent").is_some());
+    }
+
+    #[test]
+    fn parabola_and_hidden_curve_emit_no_asymptotes() {
+        let _guard = test_lock().lock().unwrap();
+        reset_session();
+        let _: ParseOk = parse_json(&set_function("f", "x^2"));
+        update_viewport(-1.0, 1.0, -10.0, 10.0);
+        let sample: serde_json::Value = parse_json(&sample_points(64));
+        assert!(sample["asymptotes"].as_array().unwrap().is_empty());
+        assert!(!sample["points"].as_array().unwrap().is_empty());
+        // Hidden curve: empty points and empty overlay, entry retained.
+        let _: ParseOk = parse_json(&set_function("f", "1/x"));
+        let _: StyleDto = parse_json(&set_function_visibility("f", false));
+        let hidden: serde_json::Value = parse_json(&sample_points(64));
+        assert!(hidden["points"].as_array().unwrap().is_empty());
+        assert!(hidden["asymptotes"].as_array().unwrap().is_empty());
     }
 }

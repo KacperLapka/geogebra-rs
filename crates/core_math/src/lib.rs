@@ -15,4 +15,4 @@ pub use ast::{BinOp, Expr, Func, ParseError, Span, UnaryOp};
 pub use diff::differentiate;
 pub use parser::parse;
 pub use simplify::simplify;
-pub use solver::{Marker, MarkerKind, POLE_THRESHOLD, brent, find_extrema, find_inflections, find_roots, scan_sign_changes, tangent_at, tangent_coeffs};
+pub use solver::{Marker, MarkerKind, POLE_THRESHOLD, brent, find_extrema, find_inflections, find_poles, find_roots, scan_sign_changes, tangent_at, tangent_coeffs};

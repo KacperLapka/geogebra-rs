@@ -401,6 +401,53 @@ pub fn tangent_segment(
     })
 }
 
+/// Vertical asymptote overlay segment (epic-3 tracer, story 1).
+///
+/// Viewport-spanning vertical line at pole `x`: `from=[x,y_min]`,
+/// `to=[x,y_max]`, mirroring the [`tangent_segment`] viewport-span idiom.
+/// `None` on non-finite `x` or a degenerate viewport — the caller then
+/// emits an empty overlay list and leaves curve + markers untouched.
+///
+/// Note: [`POLE_BREAK`]`=1e6` here intentionally duplicates
+/// `core_math::solver::POLE_THRESHOLD=1e6` (`solver.rs:13`). Both values
+/// stay unchanged: the solver owns pole-x detection, the sampler owns the
+/// NaN break; the duplication is documented, never factored out.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct VerticalAsymptote {
+    pub x: f64,
+    pub from: [f64; 2],
+    pub to: [f64; 2],
+}
+
+/// Compute the viewport-spanning vertical asymptote segment, or `None`
+/// when there is nothing to draw.
+#[allow(clippy::neg_cmp_op_on_partial_ord)]
+pub fn vertical_asymptote_segment(x: f64, viewport: &Viewport) -> Option<VerticalAsymptote> {
+    if !x.is_finite() {
+        return None;
+    }
+    let width = viewport.width();
+    if !(width > 0.0) || !width.is_finite() {
+        return None;
+    }
+    let height = viewport.height();
+    if !(height > 0.0) || !height.is_finite() {
+        return None;
+    }
+    if ![viewport.x_min, viewport.x_max, viewport.y_min, viewport.y_max]
+        .iter()
+        .all(|v| v.is_finite())
+    {
+        return None;
+    }
+    let from = [x, viewport.y_min];
+    let to = [x, viewport.y_max];
+    if !from[1].is_finite() || !to[1].is_finite() {
+        return None;
+    }
+    Some(VerticalAsymptote { x, from, to })
+}
+
 fn valid(y: f64) -> bool {
     y.is_finite()
 }
@@ -747,5 +794,64 @@ mod tests {
         // Non-finite y0 (pole at x0): tangent undefined here.
         let recip = parse("1/x").unwrap();
         assert!(tangent_segment(&recip, &HashMap::new(), 0.0, &vp).is_none());
+    }
+
+    #[test]
+    fn vertical_asymptote_spans_viewport_height() {
+        let vp = Viewport::new(-1.0, 1.0, -10.0, 10.0);
+        let seg = vertical_asymptote_segment(0.0, &vp).unwrap();
+        assert!((seg.x - 0.0).abs() < 1e-12);
+        assert_eq!(seg.from, [0.0, -10.0]);
+        assert_eq!(seg.to, [0.0, 10.0]);
+    }
+
+    #[test]
+    fn vertical_asymptote_rejects_degenerate() {
+        let vp = Viewport::new(-1.0, 1.0, -10.0, 10.0);
+        assert!(vertical_asymptote_segment(f64::NAN, &vp).is_none());
+        assert!(vertical_asymptote_segment(f64::INFINITY, &vp).is_none());
+        let flat_x = Viewport::new(2.0, 2.0, -10.0, 10.0);
+        assert!(vertical_asymptote_segment(0.0, &flat_x).is_none());
+        let flat_y = Viewport::new(-1.0, 1.0, 5.0, 5.0);
+        assert!(vertical_asymptote_segment(0.0, &flat_y).is_none());
+        let nan_vp = Viewport::new(f64::NAN, 1.0, -10.0, 10.0);
+        assert!(vertical_asymptote_segment(0.0, &nan_vp).is_none());
+    }
+
+    #[test]
+    fn reciprocal_sampler_nan_break_with_bounded_ribbon_and_arc_restart() {
+        // Locks the 3.1 I/O row: 257 samples of 1/x carry a NaN break,
+        // every finite y stays within 1e6, and the ribbon emits 2 verts
+        // per valid point with arclength restarting after the break.
+        let expr = parse("1/x").unwrap();
+        let vp = Viewport::new(-1.0, 1.0, -10.0, 10.0);
+        let pts = sample_curve(&expr, &HashMap::new(), &vp, 257);
+        assert!(pts.iter().any(|p| p[1].is_nan()));
+        assert!(
+            pts.iter()
+                .all(|p| p[1].is_nan() || p[1].abs() <= POLE_BREAK)
+        );
+        let style = default_style();
+        let verts = expand_ribbon(&pts, &style, &vp, 800.0, 600.0);
+        let valid = pts.iter().filter(|p| p[1].is_finite()).count();
+        assert_eq!(verts.len(), 2 * valid);
+        // Arclength restarts to zero after the break: the pair following
+        // the first NaN gap starts a fresh zero.
+        let arcs: Vec<f32> = verts.iter().step_by(2).map(|v| v.arclength_px).collect();
+        assert!((arcs[0] - 0.0).abs() < 1e-6);
+        let mut seen_restart = false;
+        for w in arcs.windows(2) {
+            if w[1] < w[0] {
+                assert!((w[1] - 0.0).abs() < 1e-6, "restart arcs: {arcs:?}");
+                seen_restart = true;
+                break;
+            }
+        }
+        assert!(seen_restart, "no arclength restart across NaN break");
+        // Non-pole passthrough: x^2 has no NaN and no asymptote segment
+        // needed — sampler stays finite.
+        let parab = parse("x^2").unwrap();
+        let flat = sample_curve(&parab, &HashMap::new(), &vp, 257);
+        assert!(flat.iter().all(|p| p[1].is_finite()));
     }
 }
