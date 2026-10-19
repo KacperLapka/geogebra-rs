@@ -31,3 +31,6 @@ yarn-error.log*
 .*-migration-backup-*
 /pacts/
 pact-logs/
+
+# Axum runtime state
+crates/api/data/
