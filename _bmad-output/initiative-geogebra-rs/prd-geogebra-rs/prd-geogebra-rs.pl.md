@@ -244,7 +244,7 @@ mindmap
       Pelne pokrycie testami jednostkowymi
     Przenaszalnosc
       Wieloplatformowy kod WASM
-      Mozliwosc kompilacji desktopowej Raylib
+      Mozliwosc kompilacji desktopowej
     Kompatybilnosc
       Standardowy format wymiany JSON
       Czyste kontrakty RESTful
