@@ -64,7 +64,11 @@
 
     // curve (breaks on null y; skipped when the style hides it)
     ctx.strokeStyle = style?.color ?? '#2563eb';
-    ctx.lineWidth = style?.widthPx ?? 3.5;
+    // Clamp like every other layer: ABI + shader enforce [2.5, 6.0].
+    ctx.lineWidth = Number.isFinite(style?.widthPx) ? Math.min(6.0, Math.max(2.5, style.widthPx)) : 3.5;
+    // 2D parity with the GPU dash: 8px-on / 6px-off screen-space, solid resets.
+    ctx.setLineDash(style?.dashed ? [8, 6] : []);
+    ctx.lineDashOffset = 0;
     ctx.beginPath();
     let pen = false;
     if (style?.visible !== false) {
@@ -75,6 +79,8 @@
         }
         const [px, py] = toScreen(x, y, w, h);
         if (!pen) {
+          // GPU restarts arclength at each NaN break: restart 2D dash phase too.
+          ctx.lineDashOffset = 0;
           ctx.moveTo(px, py);
           pen = true;
         } else {
@@ -83,6 +89,8 @@
       }
     }
     ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.lineDashOffset = 0;
 
     // hover marker
     if (hover && hover.math_y !== null && hover.math_y !== undefined) {

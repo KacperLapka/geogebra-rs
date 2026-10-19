@@ -46,7 +46,7 @@ pub struct FunctionStyle {
     pub color: [f32; 4],
     /// Ribbon width in px, clamped to `[MIN_WIDTH_PX, MAX_WIDTH_PX]`.
     pub width_px: f32,
-    /// False for `f(x)`; stored for derivatives (dashed rendering lands in 4.2).
+    /// False for `f(x)`; true for derivative overlays (dashed, entry 4.2).
     pub dashed: bool,
     /// False skips buffer submission for that id, keeping the stored style.
     pub visible: bool,
@@ -123,8 +123,9 @@ pub const CURVE_VERTEX_STRIDE: usize = 44;
 /// non-finite samples (pole breaks) emit nothing and reset the arclength
 /// accumulator, so no quad ever joins across a discontinuity. Hidden styles
 /// (`visible=false`) expand to nothing so no sampler or ribbon work is spent
-/// on a curve the frame will skip. Solid path
-/// only: `dash_flag` is `0.0` (the dashed branch lands in 4.2).
+/// on a curve the frame will skip. `dash_flag` is `1.0` when `style.dashed`,
+/// else `0.0` (`2.0` reserved for epic 3, never emitted here); arclength
+/// stays CSS px at 1x and is scaled by `dpr` in-shader.
 pub fn expand_ribbon(
     points: &[[f64; 2]],
     style: &FunctionStyle,
@@ -198,12 +199,13 @@ pub fn expand_ribbon(
         }
         prev_valid = Some([x, y]);
         let pos = [x as f32, y as f32];
+        let dash_flag = if style.dashed { 1.0 } else { 0.0 };
         out.push(CurveVertex {
             position_math: pos,
             normal_dir: [nx as f32, ny as f32],
             color: style.color,
             width_px: width,
-            dash_flag: 0.0,
+            dash_flag,
             arclength_px: arc,
         });
         out.push(CurveVertex {
@@ -211,7 +213,7 @@ pub fn expand_ribbon(
             normal_dir: [-(nx as f32), -(ny as f32)],
             color: style.color,
             width_px: width,
-            dash_flag: 0.0,
+            dash_flag,
             arclength_px: arc,
         });
     }
@@ -526,6 +528,99 @@ mod tests {
         let mut style = default_style();
         style.visible = false;
         assert!(expand_ribbon(&pts, &style, &vp, 800.0, 600.0).is_empty());
+    }
+
+    #[test]
+    fn dashed_flag_maps_from_style() {
+        let vp = Viewport::default();
+        let pts = vec![[-1.0, 1.0], [0.0, 0.0], [1.0, 1.0]];
+        let solid = default_style();
+        assert!(!solid.dashed);
+        let solid_verts = expand_ribbon(&pts, &solid, &vp, 800.0, 600.0);
+        assert!(!solid_verts.is_empty());
+        assert!(solid_verts.iter().all(|v| v.dash_flag == 0.0));
+        let mut dashed = default_style();
+        dashed.dashed = true;
+        let dashed_verts = expand_ribbon(&pts, &dashed, &vp, 800.0, 600.0);
+        assert_eq!(dashed_verts.len(), solid_verts.len());
+        assert!(dashed_verts.iter().all(|v| v.dash_flag == 1.0));
+        // Pairs share the flag so no quad mixes solid/dashed.
+        for pair in dashed_verts.as_chunks::<2>().0 {
+            assert_eq!(pair[0].dash_flag, pair[1].dash_flag);
+        }
+    }
+
+    #[test]
+    fn dashed_arclength_restarts_after_nan_break() {
+        let vp = Viewport::new(-1.0, 1.0, -10.0, 10.0);
+        let pts = vec![
+            [-1.0, -1.0],
+            [-0.5, -0.5],
+            [0.0, f64::NAN],
+            [0.5, 0.5],
+            [1.0, 1.0],
+        ];
+        let mut style = default_style();
+        style.dashed = true;
+        let verts = expand_ribbon(&pts, &style, &vp, 800.0, 600.0);
+        // 4 valid samples -> 8 verts; NaN emits nothing.
+        assert_eq!(verts.len(), 8);
+        assert!(verts.iter().all(|v| v.dash_flag == 1.0));
+        // One arclength per pair: restart to zero after the break.
+        let arcs: Vec<f32> = verts.iter().step_by(2).map(|v| v.arclength_px).collect();
+        assert_eq!(arcs.len(), 4);
+        assert!((arcs[0] - 0.0).abs() < 1e-6);
+        assert!(arcs[1] > arcs[0]);
+        assert!((arcs[2] - 0.0).abs() < 1e-6);
+        assert!(arcs[3] > arcs[2]);
+    }
+
+    #[test]
+    fn never_emits_reserved_dash_flag_2_0() {
+        let expr = parse("1/x").unwrap();
+        let vp = Viewport::new(-1.0, 1.0, -10.0, 10.0);
+        let pts = sample_curve(&expr, &HashMap::new(), &vp, 257);
+        for dashed in [false, true] {
+            let mut style = default_style();
+            style.dashed = dashed;
+            let verts = expand_ribbon(&pts, &style, &vp, 800.0, 600.0);
+            assert!(!verts.is_empty());
+            for v in &verts {
+                assert!(
+                    v.dash_flag == 0.0 || v.dash_flag == 1.0,
+                    "bad flag {}",
+                    v.dash_flag
+                );
+                assert!((v.dash_flag - 2.0).abs() > 1e-6);
+            }
+        }
+    }
+
+    #[test]
+    fn hidpi_dash_period_scales_with_dpr() {
+        // Locks the HiDPI contract with no public surface change: the shader
+        // must scale period/on/fade by dpr and scale arclength once in the
+        // vertex stage, so dashes stay 8/6 CSS px at any DPR.
+        let src = include_str!("../shaders/curve.wgsl");
+        assert!(src.contains("14.0 * dpr"), "period must scale with dpr");
+        assert!(src.contains("8.0 * dpr"), "dash-on must scale with dpr");
+        assert!(
+            src.contains("arclength_px * dpr"),
+            "arclength must scale by dpr in-shader"
+        );
+        // CPU keeps arclength in CSS px: identical points give identical
+        // arclength regardless of the style flag, so one buffer is correct
+        // at any DPR.
+        let vp = Viewport::default();
+        let pts = vec![[-1.0, 1.0], [0.0, 0.0], [1.0, 1.0]];
+        let solid = expand_ribbon(&pts, &default_style(), &vp, 800.0, 600.0);
+        let mut dashed_style = default_style();
+        dashed_style.dashed = true;
+        let dashed = expand_ribbon(&pts, &dashed_style, &vp, 800.0, 600.0);
+        assert_eq!(solid.len(), dashed.len());
+        for (s, d) in solid.iter().zip(dashed.iter()) {
+            assert!((s.arclength_px - d.arclength_px).abs() < 1e-6);
+        }
     }
 
     #[test]

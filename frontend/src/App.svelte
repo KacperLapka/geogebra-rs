@@ -28,8 +28,8 @@
   let gpu = $state({ status: 'cpu-fallback', viewport_revision: 0 });
   let fps = $state(null);
   // Render-owned style mirror for the tracer curve `f`: hex stays local for
-  // the 2D stroke, width/visibility sync from the bridge return values.
-  let style = $state({ color: '#2563eb', widthPx: 3.5, visible: true });
+  // the 2D stroke, width/dashed/visibility sync from the bridge return values.
+  let style = $state({ color: '#2563eb', widthPx: 3.5, dashed: false, visible: true });
 
   // Share/load tracer (5.1): Share button + panel + /w/<slug> and ?s=<slug>.
   let shareOpen = $state(false);
@@ -95,8 +95,14 @@
 
   function handleStyle(colorHex) {
     if (!backend || !/^#[0-9a-fA-F]{6}$/.test(colorHex)) return;
-    const res = backend.setFunctionStyle('f', colorHex, style.widthPx, false);
-    style = { color: colorHex, widthPx: res?.width_px ?? style.widthPx, visible: res?.visible ?? style.visible };
+    const res = backend.setFunctionStyle('f', colorHex, style.widthPx, style.dashed);
+    style = { color: colorHex, widthPx: res?.width_px ?? style.widthPx, dashed: res?.dashed ?? style.dashed, visible: res?.visible ?? style.visible };
+  }
+
+  function handleDashed(dashed) {
+    if (!backend) return;
+    const res = backend.setFunctionStyle('f', style.color, style.widthPx, !!dashed);
+    style = { ...style, widthPx: res?.width_px ?? style.widthPx, dashed: res?.dashed ?? !!dashed };
   }
 
   function handleVisibility(visible) {
@@ -296,8 +302,10 @@
   <StyleControls
     colorHex={style.color}
     widthPx={style.widthPx}
+    dashed={style.dashed}
     visible={style.visible}
     onStyle={handleStyle}
+    onDashed={handleDashed}
     onVisibility={handleVisibility}
   />
 
