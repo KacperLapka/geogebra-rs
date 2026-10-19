@@ -39,3 +39,11 @@ title = "Workspace persistence and sharing"
 description = "Workspace state serialises to JSON under 10 KB; Axum POST /api/workspaces returns an 8-char slug in under 50 ms; GET /api/workspaces/:slug restores the identical session on a second device."
 covers = ["R11", "R12"]
 after = [{ epic = 1, needs = "workspace JSON schema defined by wasm_bridge serialisation" }]
+
+[[epic]]
+id = 6
+slug = "epic-frontend-explorer"
+title = "Function explorer frontend"
+description = "Svelte 5 explorer shell integration part only, contract-only via wasm_bridge ABI (engine/render/API budgets stay in epics 1-5): renders DESIGN tokens, Analyze loop with <50ms errors, sliders, derivative card, DOM marker buttons synced to canvas at 60 FPS, toggles, share row, keyboard and reduced-motion pass, on the deployed static bundle. Single-function cut: single primary plus auto f/fprime/fdouble/tangent only."
+covers = ["R1", "R2", "R3", "R4", "R5", "R6", "R7", "R8", "R9", "R10", "R11", "R12"]
+after = [{ epic = 1, needs = "Vite and wasm-pack pipeline, parse-eval-render pipeline and wasm_bridge surface" }, { epic = 2, needs = "marker and tangent data shape and query_hover overlay contract" }, { epic = 3, needs = "pole and asymptote overlay shape and break contract" }, { epic = 4, needs = "set_function_style and visibility surface and ribbon and grid pipeline" }, { epic = 5, needs = "workspace JSON schema with version and slug and POST and GET contract" }]

@@ -7,12 +7,14 @@ paradigm: Pipes-and-Filters with strict Client-Compute boundary
 scope: Full GeoGebra RS system — math engine, rendering pipeline, WASM bridge, persistence API
 status: final
 created: 2026-10-18
-updated: 2026-10-18
+updated: 2026-10-19
 binds:
   - R1, R2, R3, R4, R5, R6, R7, R8, R9, R10, R11, R12
 sources:
   - _bmad-output/initiative-geogebra-rs/initiative-geogebra-rs.md
   - _bmad-output/initiative-geogebra-rs/prd-geogebra-rs/prd-geogebra-rs.md
+  - _bmad-output/initiative-geogebra-rs/ux-function-explorer/DESIGN.md
+  - _bmad-output/initiative-geogebra-rs/ux-function-explorer/EXPERIENCE.md
 ---
 
 # Architecture Spine — GeoGebra RS
@@ -74,13 +76,14 @@ flowchart LR
 
 - **Binds:** `crates/render`, `crates/wasm_bridge`, Svelte 5 frontend
 - **Prevents:** text font atlas bloat in WASM binary; prevents `wgpu` line-width limitation producing 1-px hairlines for curves and derivative overlays
-- **Rule:** `render` draws all geometric content (curves as quad-ribbon triangle strips expanded in WGSL vertex shader, coordinate grid, asymptote dashed lines, root/extrema marker circles) on the `<canvas>`. Svelte renders all text (axis tick labels, formula annotations, hover tooltips) as a transparent DOM/SVG layer positioned over the canvas. On `mousemove`, Svelte calls `query_hover(px_x, px_y)` on the WASM bridge and displays the returned `{ math_x, math_y, marker }` as an HTML tooltip — it never performs spatial math itself. `wgpu` must request backends `PRIMARY | GL`; if WebGPU adapter fails, silently retry with a WebGL2 adapter.
+- **Rule:** `render` draws all geometric content (curves as quad-ribbon triangle strips expanded in WGSL vertex shader, coordinate grid, asymptote dashed lines) on the `<canvas>`. Svelte renders all text (axis tick labels, formula annotations, hover tooltips) as a transparent DOM/SVG layer positioned over the canvas. All analysis markers (roots/extrema/inflection) are DOM buttons for keyboard/focus with 44px hit padding; the canvas carries `role="img"` with a text fallback. On `mousemove`, Svelte calls `query_hover(px_x, px_y)` on the WASM bridge and displays the returned `{ math_x, math_y, marker }` as an HTML tooltip — it never performs spatial math itself. `wgpu` must request backends `PRIMARY | GL`; if WebGPU adapter fails, silently retry with a WebGL2 adapter.
+- **Amendment 2026-10-19 (UX function-explorer reconciliation):** curves + grid stay on canvas/wgpu per AD-4; there is no canvas-only exception for markers even for dense clusters — the extra overlay sync cost at 60 FPS is accepted. Multi-curve infra remains invariant (per-function style, dashed derived curves); the UX run constrains to a single primary plus auto-displayed derived `f`/`f'`/`f''`/tangent — the multi-function set is deferred, not forbidden (see Deferred). Derived curves `f'`/`f''`/tangent auto-render dashed (green/purple/amber) alongside solid indigo `f`; toggles are canvas-only re-render and never refire analysis. Constraining companions: `_bmad-output/initiative-geogebra-rs/ux-function-explorer/DESIGN.md` and `_bmad-output/initiative-geogebra-rs/ux-function-explorer/EXPERIENCE.md`.
 
 ### AD-5 — WASM ABI: Named Surface Functions Only
 
 - **Binds:** `crates/wasm_bridge` — all `#[wasm_bindgen]` exports
 - **Prevents:** Svelte coupling directly to internal `Expr` or `Viewport` Rust types; prevents unbounded growth of WASM surface area
-- **Rule:** The public WASM API is exactly these four entry points (any expansion requires an explicit AD amendment):
+- **Rule:** The public WASM API is exactly these five entry points (any expansion requires an explicit AD amendment):
 
   | Function | Signature | Returns |
   | :--- | :--- | :--- |
@@ -91,6 +94,7 @@ flowchart LR
   | `query_hover` | `(px_x: f64, px_y: f64)` | `HoverResult` |
 
   All types crossing the boundary are `#[wasm_bindgen]` structs with `pub` fields or serialize to plain JSON. Rust owns all live math, GPU state, and viewport state; Svelte sets the viewport by calling `update_viewport` and reads it back only through serialized workspace JSON — it never holds a parallel authoritative copy.
+- **Amendment 2026-10-19 (UX function-explorer reconciliation):** Rust `wasm_bridge` owns all spatial math via `query_hover`; the Svelte overlay only positions the tooltip and never caches spatial results. `update_param` triggers an eval-only re-render without refiring `differentiate`/`simplify`, holding the 8 ms / 60 FPS budget — param-slider drags re-render curves + values, symbolic analysis fires only on Analyze.
 
 ### AD-6 — Axum as Unauthenticated JSON Blob Store
 
@@ -182,6 +186,7 @@ geogebra-rs/
 
 ## Deferred
 
+- **Multi-function set:** the UX run constrains to a single primary function plus auto-displayed derived `f`/`f'`/`f''`/tangent; the multi-function set is deferred, not forbidden — AD-4 per-function style infra already covers it when re-enabled.
 - **Native desktop binary:** `render` crate targets `winit` + native `wgpu` adapter for a Raylib-style desktop build. Deferred to post-MVP; the crate boundary makes this additive.
 - **Implicit / parametric curves:** Require a 2D marching-squares evaluator. Not in MVP scope; nothing here prevents adding it as a filter stage.
 - **Workspace link expiry:** Storage TTL policy (e.g., 90-day retention). Backend concern, deferred until hosting infra is chosen.

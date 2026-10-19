@@ -79,3 +79,7 @@ For mathematics students and educators, GeoGebra RS provides zero-latency client
 - Assumption: Calculus curriculum focuses primarily on single-variable explicit functions $y = f(x)$ on the Cartesian plane (prd Section 11).
 - Decision (2026-10-18): Workspace links are permanent for MVP; 90-day expiry deferred beyond MVP, retires R13 (id never reused). Supersedes 90-day expiry decision.
 - Decision (2026-10-18): SVG export deferred beyond MVP as out-of-scope. Supersedes SVG question.
+- Decision (2026-10-19): New epic epic-frontend-explorer (id 6) chosen over folding frontend into epic-rendering-polish / epic-workspace-persistence; rule: one source capability delivered and deployed together as one Svelte static bundle, contract-only to Rust via wasm_bridge ABI.
+- Decision (2026-10-19): Tracer for epic-frontend-explorer is function-bar Analyze loop + DOM-marker overlay sync first; riskiest canvas-geometry + DOM-buttons + query_hover path at 60 FPS, least-sure part second.
+- Decision (2026-10-19): Single-function scope-cut confirmed for MVP (single primary + auto f/f'/f''/tangent); multi-function set deferred, architecture multi-curve infra retained, not forbidden.
+- Decision (2026-10-19): Spine finalized via bmad-architecture before slicing (AD-4 DOM-buttons amendment, AD-5 eval-only tightening, 2026-10-19); epic-frontend-explorer References cite spine + DESIGN.md + EXPERIENCE.md.
