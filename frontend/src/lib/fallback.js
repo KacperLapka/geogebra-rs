@@ -2,6 +2,11 @@
 // wasm-pack bundle is linked (see scripts/sync-pkg.js). Production math
 // always comes from Rust; this exists so `npm run dev` demonstrates the
 // parse-plot-hover-slider loop before the WASM toolchain runs.
+//
+// UX `e^(…)` + implicit `*` (`0.5x`) normalize to explicit `exp(…)` / `*`
+// before parsing so the dev loop accepts the same hero input as Rust
+// (App normalizes too; this keeps direct fallback calls working).
+import { normalizeForBackend } from './derive.js';
 
 const FUNCS = {
   sin: Math.sin,
@@ -277,11 +282,20 @@ export function createFallback() {
   };
 
   function validate(formula) {
+    // Normalize UX shorthand first (`e^(…)` → `exp(…)`, implicit `*`),
+    // falling back to the raw text so char-exact spans still point into
+    // the original on genuine typos.
     try {
-      const node = parseFormula(formula);
-      return { ok: true, node, params: collectParams(node) };
-    } catch (e) {
-      return { ok: false, span: e.span ?? [0, 0], message: e.message ?? 'parse error' };
+      const normalized = normalizeForBackend(formula);
+      const node = parseFormula(normalized);
+      return { ok: true, node, params: collectParams(node), normalized };
+    } catch {
+      try {
+        const node = parseFormula(formula);
+        return { ok: true, node, params: collectParams(node), normalized: formula };
+      } catch (e) {
+        return { ok: false, span: e.span ?? [0, 0], message: e.message ?? 'parse error' };
+      }
     }
   }
 
@@ -301,7 +315,7 @@ export function createFallback() {
       const r = validate(formula);
       if (!r.ok) return { ok: false, span: r.span, message: r.message };
       for (const p of r.params) if (!state.params.has(p)) state.params.set(p, 1);
-      state.functions.set(id, { node: r.node, text: formula });
+      state.functions.set(id, { node: r.node, text: r.normalized ?? formula });
       if (isIdent(id)) ensureOrder(id);
       styleFor(id);
       return { ok: true, params: r.params };
@@ -354,9 +368,34 @@ export function createFallback() {
             return [x, guard(evaluate(fn.node, x, params))];
           })
         : [];
-      // Shape parity with the Rust `sample_points` (2.6 + 3.1): curve only,
-      // empty overlays, so the dev loop never crashes without the bundle.
-      return { points, params: [...state.params.keys()], markers: [], tangent: null, asymptotes: [] };
+      // Dev-only tangent (numeric, for the point-analysis card): mirrors the
+      // Rust viewport-spanning segment when `x0` is finite; missing/non-finite
+      // (including poles) yields null so rows show an em-dash. Markers stay
+      // empty in fallback (solver lives in Rust); the layer stays silent.
+      let tangent = null;
+      const x0 = state.params.get('x0');
+      if (fn && Number.isFinite(x0)) {
+        const y0 = evaluate(fn.node, x0, params);
+        const h = 1e-5;
+        const yp = evaluate(fn.node, x0 + h, params);
+        const ym = evaluate(fn.node, x0 - h, params);
+        const slope = (yp - ym) / (2 * h);
+        if (
+          Number.isFinite(y0) && Math.abs(y0) <= POLE &&
+          Number.isFinite(slope) && Math.abs(slope) <= POLE &&
+          Number.isFinite(v.x_min) && Number.isFinite(v.x_max) &&
+          v.x_min < v.x_max
+        ) {
+          const from = [v.x_min, y0 + slope * (v.x_min - x0)];
+          const to = [v.x_max, y0 + slope * (v.x_max - x0)];
+          if (from.every(Number.isFinite) && to.every(Number.isFinite)) {
+            tangent = { x0, y0, slope, from, to };
+          }
+        }
+      }
+      // Shape parity with the Rust `sample_points` (2.6 + 3.1): curve +
+      // tangent, empty markers/asymptotes in fallback.
+      return { points, params: [...state.params.keys()], markers: [], tangent, asymptotes: [] };
     },
     samplePointsFor(id, n) {
       const fn = state.functions.get(id);

@@ -15,40 +15,56 @@
     loadWorkspace,
     restoreWorkspace
   } from './lib/share.js';
+  import {
+    validateOriginal,
+    normalizeForBackend,
+    deriveAll,
+    format3,
+    behaviorWord
+  } from './lib/derive.js';
+
+  const DESIGN = {
+    f: { color: '#4F46E5', width: 2.5, dashed: false },
+    fp: { color: '#1FA36B', width: 2.5, dashed: true },
+    fpp: { color: '#9333EA', width: 2.5, dashed: true }
+  };
+  const DEFAULT_VIEW = { x_min: -5, x_max: 5, y_min: -5, y_max: 5 };
 
   let backend = $state(null);
-  let formula = $state('a*x^2');
+  let draft = $state('');
+  let committed = $state('');
   let error = $state(null);
+  let analyzing = $state(false);
+  let hasAnalyzed = $state(false);
   let params = $state({});
-  // Tangent point `x0`: ordinary session param for the Rust overlay path,
-  // never a generic slider (filtered out below so it renders once).
   let x0 = $state(1.0);
   let markers = $state([]);
   let tangent = $state(null);
   let asymptotes = $state([]);
   let curves = $state([]);
-  // Rust-owned grid truth (4.4): majors stroke sync, minors faint, labels ride
-  // as `{value, text}` for the DOM overlay. `refresh()` repopulates the whole
-  // object from `backend.gridLines()` on every viewport change.
   let grid = $state({ x: [], y: [], x_minor: [], y_minor: [], x_labels: [], y_labels: [], step_x: 0, step_y: 0 });
-  let viewport = $state({ x_min: -10, x_max: 10, y_min: -10, y_max: 10 });
+  let viewport = $state({ ...DEFAULT_VIEW });
   let hover = $state(null);
   let workspace = $state(null);
   let gpu = $state({ status: 'cpu-fallback', viewport_revision: 0 });
   let fps = $state(null);
-  // Three demo curves (4.3): `f` stays formula-bar-driven; `g`/`h` are fixed
-  // demos so the palette/width/visibility polish shows without calculus
-  // (derivative math stays with the symbolic-calculus epic).
-  const DEMO_CURVES = [
-    { id: 'f', formula: 'a*x^2' },
-    { id: 'g', formula: '1/x' },
-    { id: 'h', formula: 'sin(x)' }
-  ];
-  // Local fallback when the bridge style map has no entry for an id;
-  // render-owned truth lives in the bridge (E4-STYLE-STRUCT).
-  const FALLBACK_STYLE = { color: '#2563eb', widthPx: 3.5, dashed: false, visible: true };
+  let fPrimeDisplay = $state('');
+  let fDoubleDisplay = $state('');
+  let toggles = $state({ f: true, fp: true, fpp: true, tangent: true, markers: true });
+  let announced = $state({ x0: 1, value: '—', slope: '—', behavior: '—' });
 
-  const styleOf = (id) => curves.find((c) => c.id === id)?.style ?? { ...FALLBACK_STYLE };
+  let shareBusy = $state(false);
+  let shareSlug = $state(null);
+  let shareLink = $state('');
+  let shareNote = $state('');
+  let shareTone = $state('muted');
+  let shareRetry = $state(false);
+  let loadNote = $state('');
+  let online = $state(typeof navigator !== 'undefined' ? (navigator.onLine ?? true) : true);
+  let slugInputEl = $state(null);
+
+  const isStale = () => !hasAnalyzed || draft.trim() !== committed.trim() || !!error || analyzing;
+  const showBadge = () => hasAnalyzed && !isStale();
 
   function refresh() {
     if (!backend) return;
@@ -56,28 +72,26 @@
     workspace = ws;
     grid = backend.gridLines();
     gpu = backend.gpuStatus();
-    // Per-id styles from the bridge style map (single source of truth).
     const nextStyles = {};
     for (const [id, entry] of Object.entries(ws.style ?? {})) {
       nextStyles[id] = {
-        color: entry?.color_hex ?? FALLBACK_STYLE.color,
-        widthPx: entry?.width_px ?? FALLBACK_STYLE.widthPx,
-        dashed: entry?.dashed ?? false,
-        visible: entry?.visible ?? true
+        color: entry?.color_hex ?? '#4f46e5',
+        widthPx: entry?.width_px ?? 2.5,
+        dashed: entry?.dashed ?? id !== 'f',
+        visible: entry?.visible ?? toggles[id] ?? true
       };
     }
-    // Sample every function known to the session, sorted for stable order.
-    const ids = Object.keys(ws.functions ?? {});
-    ids.sort();
-    curves = ids.map((id) => ({
+    const wantIds = ['f', 'fp', 'fpp'].filter((id) => ws.functions?.[id] !== undefined);
+    curves = wantIds.map((id) => ({
       id,
       points: backend.samplePointsFor(id, 240).points,
-      style: nextStyles[id] ?? { ...FALLBACK_STYLE }
+      style: nextStyles[id] ?? {
+        color: DESIGN[id]?.color ?? '#4f46e5',
+        widthPx: DESIGN[id]?.width ?? 2.5,
+        dashed: DESIGN[id]?.dashed ?? id !== 'f',
+        visible: toggles[id] ?? true
+      }
     }));
-    // Calculus overlays from the Rust `sample_points` (2.6, additive-only):
-    // viewport-scoped markers + the `x0` tangent segment + vertical
-    // asymptotes (3.1). Stale bundles without the fields read as empty
-    // overlays, never a crash.
     try {
       const overlay = backend.samplePoints(240);
       markers = overlay.markers ?? [];
@@ -90,68 +104,162 @@
     }
     const known = {};
     for (const name of Object.keys(ws.params ?? {})) {
-      // `x0` has its dedicated slider below; never a generic slider.
       if (name === 'x0') continue;
       known[name] = params[name] ?? ws.params[name] ?? 1;
     }
     params = known;
-    // Keep the dedicated slider in sync when `x0` arrives via restore/share.
     if (Number.isFinite(ws.params?.x0)) x0 = ws.params.x0;
+    // Sync toggles from restored style visibilities (share restore path).
+    for (const id of ['f', 'fp', 'fpp']) {
+      if (typeof nextStyles[id]?.visible === 'boolean') toggles[id] = nextStyles[id].visible;
+    }
   }
 
-  // Share/load tracer (5.1): Share button + panel + /w/<slug> and ?s=<slug>.
-  let shareOpen = $state(false);
-  let shareBusy = $state(false);
-  let shareSlug = $state(null);
-  let shareLink = $state('');
-  let shareNote = $state('');
-  let shareTone = $state('muted');
-  let shareRetry = $state(false);
-  let loadNote = $state('');
-  let online = $state(typeof navigator !== 'undefined' ? (navigator.onLine ?? true) : true);
-  let shareButtonEl = $state(null);
-  let panelEl = $state(null);
-  let slugInputEl = $state(null);
-  let retryEl = $state(null);
-
-  function applyFormula(text) {
-    if (!backend) return;
-    formula = text;
-    const res = backend.setFunction('f', text);
-    if (res.ok) {
+  function validateDraft(text) {
+    if (!text.trim()) {
       error = null;
+      return;
+    }
+    const t0 = performance.now();
+    const res = validateOriginal(text);
+    const dt = performance.now() - t0;
+    // Budget guard: parser is sync and far under 50ms; measured for the spike note.
+    if (dt > 50) console.warn(`validate took ${dt.toFixed(1)}ms`);
+    if (res.ok) error = null;
+    else error = { message: res.message, span: res.span };
+  }
+
+  function handleDraftInput(text) {
+    draft = text;
+    validateDraft(text);
+  }
+
+  function handleClear() {
+    draft = '';
+    error = null;
+    // Empty state: clear analysis so share row, badge, and derivative card
+    // hide (cold); canvas keeps last good curves until next Analyze.
+    committed = '';
+    hasAnalyzed = false;
+    fPrimeDisplay = '';
+    fDoubleDisplay = '';
+    shareSlug = null;
+    shareLink = '';
+    shareNote = '';
+  }
+
+  async function handleAnalyze(presetFormula) {
+    const input = (presetFormula ?? draft).trim();
+    if (!input) return;
+    if (presetFormula !== undefined) {
+      draft = presetFormula;
+      validateDraft(presetFormula);
+      if (error) return;
+    } else if (error) {
+      return;
+    }
+    if (!backend || analyzing) return;
+    analyzing = true;
+    // Let "Analyzing…" paint; previous curves stay visible (no flash).
+    await new Promise((r) => setTimeout(r, 0));
+    try {
+      let normalized;
+      let derived;
+      try {
+        derived = deriveAll(input);
+        normalized = derived.normalized;
+      } catch (e) {
+        error = { message: e.message ?? 'Parse error', span: e.span ?? [0, input.length] };
+        analyzing = false;
+        return;
+      }
+      const res = backend.setFunction('f', normalized);
+      if (!res.ok) {
+        // Backend spans index the normalized string; when normalization
+        // reshaped the typed text the caret would mislead, so omit it.
+        error = normalized !== input
+          ? { message: res.message, span: null }
+          : { message: res.message, span: res.span };
+        analyzing = false;
+        return;
+      }
+      // Symbolic only on Analyze: derive f'/f'' once, install as auto curves
+      // via existing setFunction so sampling stays in WASM (no new ABI).
+      try {
+        backend.setFunction('fp', derived.primeBackend);
+      } catch {
+        // Additive: a derived install failure never blocks the primary curve.
+      }
+      try {
+        backend.setFunction('fpp', derived.doubleBackend);
+      } catch {
+        // Same: f'' is additive.
+      }
+      // Fixed DESIGN palette (wins over fallback blue).
+      try {
+        backend.setFunctionStyle('f', DESIGN.f.color, DESIGN.f.width, DESIGN.f.dashed);
+        backend.setFunctionStyle('fp', DESIGN.fp.color, DESIGN.fp.width, DESIGN.fp.dashed);
+        backend.setFunctionStyle('fpp', DESIGN.fpp.color, DESIGN.fpp.width, DESIGN.fpp.dashed);
+        // Re-assert visibilities from toggles (canvas-only, no analysis refire).
+        backend.setFunctionVisibility('f', toggles.f !== false);
+        backend.setFunctionVisibility('fp', toggles.fp !== false);
+        backend.setFunctionVisibility('fpp', toggles.fpp !== false);
+      } catch {
+        // Style setters are additive; ignore.
+      }
       const next = { ...params };
-      // `x0` keeps its dedicated slider even if a formula names it.
       for (const name of res.params) if (name !== 'x0' && !(name in next)) next[name] = 1;
       for (const name of Object.keys(next)) if (name !== 'x0' && !res.params.includes(name)) delete next[name];
       params = next;
-    } else {
-      error = { message: res.message, span: res.span };
+      // Store normalized so reopen (which restores normalized) matches.
+      committed = normalized;
+      draft = normalized;
+      fPrimeDisplay = derived.primeDisplay;
+      fDoubleDisplay = derived.doubleDisplay;
+      error = null;
+      hasAnalyzed = true;
+      // Reset share row for the fresh analysis (gated until success).
+      shareSlug = null;
+      shareLink = '';
+      shareNote = '';
+      shareRetry = false;
+      refresh();
+      commitAnnounced();
+    } finally {
+      analyzing = false;
     }
-    refresh();
+  }
+
+  function handleTry(formula) {
+    handleAnalyze(formula);
   }
 
   function handleParam(name, value) {
-    // R2 real-time path: update_param + resample synchronously so the
-    // curve follows the slider drag within the same frame (<16ms budget).
     if (!Number.isFinite(value)) return;
     backend.updateParam(name, value);
     params = { ...params, [name]: value };
     refresh();
   }
 
+  function handleParamCommit() {
+    commitAnnounced();
+  }
+
   function handleX0(value) {
-    // Tangent-point path (2.6): same-frame `updateParam("x0")` + resample
-    // as the generic sliders, so the tangent follows the drag.
     if (!Number.isFinite(value)) return;
     backend.updateParam('x0', value);
     x0 = value;
     refresh();
   }
 
+  function handleX0Commit(value) {
+    if (Number.isFinite(value)) {
+      x0 = value;
+      commitAnnounced();
+    }
+  }
+
   function handleViewport(vp) {
-    // Local guard mirrors the Rust `update_viewport` rejection so a
-    // degenerate span never becomes local state diverging from Rust truth.
     const { x_min, x_max, y_min, y_max } = vp ?? {};
     if (![x_min, x_max, y_min, y_max].every(Number.isFinite)) return;
     if (!(x_min < x_max) || !(y_min < y_max)) return;
@@ -166,70 +274,74 @@
     hover = { px, py, math_x: res.math_x, math_y: res.math_y, marker: res.marker ?? null };
   }
 
-  function handleStyle(id, colorHex) {
-    if (!backend || !/^#[0-9a-fA-F]{6}$/.test(colorHex)) return;
-    const cur = styleOf(id);
-    backend.setFunctionStyle(id, colorHex, cur.widthPx, cur.dashed);
-    refresh();
-  }
-
-  function handleDashed(id, dashed) {
+  function handleToggle(key, visible) {
+    toggles = { ...toggles, [key]: visible };
     if (!backend) return;
-    const cur = styleOf(id);
-    backend.setFunctionStyle(id, cur.color, cur.widthPx, !!dashed);
-    refresh();
-  }
-
-  function handleVisibility(id, visible) {
-    if (!backend) return;
-    backend.setFunctionVisibility(id, !!visible);
-    refresh();
-  }
-
-  function closeShare() {
-    shareOpen = false;
-    shareButtonEl?.focus?.();
-  }
-
-  function handlePanelKey(e) {
-    if (e.key === 'Escape') {
-      e.stopPropagation();
-      closeShare();
+    // Canvas-only re-render, analysis retained (never setFunction).
+    if (key === 'f' || key === 'fp' || key === 'fpp') {
+      try {
+        backend.setFunctionVisibility(key, !!visible);
+      } catch {
+        // Ignore, still refresh.
+      }
     }
+    refresh();
+  }
+
+  function pointValues() {
+    if (!hasAnalyzed || !tangent) return { value: '—', slope: '—', behavior: '—', line: '—' };
+    const y0 = tangent.y0;
+    const slope = tangent.slope;
+    if (!Number.isFinite(y0) || !Number.isFinite(slope)) return { value: '—', slope: '—', behavior: '—', line: '—' };
+    const behavior = behaviorWord(slope);
+    const line = `y = ${format3(y0)} + ${format3(slope)}·(x−${format3(x0)})`;
+    return { value: format3(y0), slope: format3(slope), behavior, line };
+  }
+
+  function commitAnnounced() {
+    const v = pointValues();
+    announced = { x0, value: v.value, slope: v.slope, behavior: v.behavior };
   }
 
   async function handleShare() {
-    if (!backend || shareBusy || !online) return;
-    shareOpen = true;
+    if (!backend || shareBusy || !online || !hasAnalyzed) return;
     shareBusy = true;
     shareSlug = null;
     shareLink = '';
     shareNote = 'Saving…';
     shareTone = 'muted';
     shareRetry = false;
-    // Focus the panel for keyboard users once it renders.
-    queueMicrotask(() => panelEl?.focus?.());
+    await tick();
     const doc = backend.serializeWorkspace();
     const res = await saveWorkspace(doc);
     shareBusy = false;
     if (res.ok) {
       shareSlug = res.slug;
       shareLink = shortlink(res.slug);
-      shareNote = '';
+      // First press creates + copies: confirm inline immediately instead of
+      // showing Ready and requiring a second press.
+      try {
+        await navigator.clipboard.writeText(shareUrl(res.slug, window.location.origin));
+        shareNote = 'Copied.';
+        shareTone = 'success';
+      } catch {
+        shareNote = '';
+        shareTone = 'muted';
+        queueMicrotask(() => slugInputEl?.select?.());
+        return;
+      }
       queueMicrotask(() => slugInputEl?.select?.());
     } else if (res.error === 'too-large') {
       shareNote = 'Workspace too large to share.';
       shareTone = 'danger';
-      // Manual retry: panel stays open with the local workspace untouched;
-      // one click re-POSTs the current workspace once it is simplified.
       shareRetry = true;
-      tick().then(() => retryEl?.focus?.());
     } else if (res.error === 'network' || !online) {
-      shareNote = "You're offline. Showing your local workspace.";
+      shareNote = "You're offline — sharing needs a connection.";
       shareTone = 'muted';
     } else {
-      shareNote = 'Could not share this workspace.';
+      shareNote = "Couldn't create the link. Try again.";
       shareTone = 'danger';
+      shareRetry = true;
     }
   }
 
@@ -239,12 +351,10 @@
     try {
       await navigator.clipboard.writeText(full);
     } catch {
-      // Clipboard blocked (projector rooms, locked-down browsers):
-      // fall back to manual selection of the slug field.
       slugInputEl?.select?.();
       return;
     }
-    shareNote = 'Link copied.';
+    shareNote = 'Copied.';
     shareTone = 'success';
   }
 
@@ -252,13 +362,9 @@
     if (!backend || !isSlug(slug)) return;
     const loaded = await loadWorkspace(slug);
     if (!loaded.ok) {
-      if (loaded.error === 'unknown') {
-        loadNote = 'Unknown workspace. Check the link and try again.';
-      } else if (loaded.error === 'network') {
-        loadNote = "You're offline. Showing your local workspace.";
-      } else {
-        loadNote = 'Could not load this workspace.';
-      }
+      if (loaded.error === 'unknown') loadNote = 'Unknown workspace. Check the link and try again.';
+      else if (loaded.error === 'network') loadNote = "You're offline. Showing your local workspace.";
+      else loadNote = 'Could not load this workspace.';
       return;
     }
     const doc = loaded.doc;
@@ -267,55 +373,76 @@
       loadNote = 'Could not load this workspace.';
       return;
     }
-    if (typeof doc.functions?.f === 'string') formula = doc.functions.f;
-    // `x0` restores to its dedicated slider, never the generic list.
+    if (typeof doc.functions?.f === 'string') {
+      // Display the stored (normalized) expression; draft/committed align so
+      // the badge shows fresh, not stale.
+      committed = doc.functions.f;
+      draft = doc.functions.f;
+      try {
+        const d = deriveAll(doc.functions.f);
+        fPrimeDisplay = d.primeDisplay;
+        fDoubleDisplay = d.doubleDisplay;
+        // Re-install auto curves if the stored doc predates them.
+        if (!doc.functions?.fp) {
+          try {
+            backend.setFunction('fp', d.primeBackend);
+          } catch {}
+        }
+        if (!doc.functions?.fpp) {
+          try {
+            backend.setFunction('fpp', d.doubleBackend);
+          } catch {}
+        }
+        try {
+          backend.setFunctionStyle('f', DESIGN.f.color, DESIGN.f.width, DESIGN.f.dashed);
+          backend.setFunctionStyle('fp', DESIGN.fp.color, DESIGN.fp.width, DESIGN.fp.dashed);
+          backend.setFunctionStyle('fpp', DESIGN.fpp.color, DESIGN.fpp.width, DESIGN.fpp.dashed);
+        } catch {}
+      } catch {
+        fPrimeDisplay = '';
+        fDoubleDisplay = '';
+      }
+    }
     if (Number.isFinite(doc.params?.x0)) x0 = doc.params.x0;
     params = Object.fromEntries(Object.entries(doc.params ?? {}).filter(([k]) => k !== 'x0'));
     viewport = { ...doc.viewport };
     error = null;
     loadNote = '';
+    hasAnalyzed = true;
     refresh();
+    commitAnnounced();
   }
 
   onMount(async () => {
     backend = await getBackend();
     backend.setCanvasSize(800, 420);
-    // Seed the tangent point so the 2.6 overlay draws on first paint;
-    // missing `x0` would otherwise render `tangent: null` until first drag.
     backend.updateParam('x0', x0);
-    // Shared link view: primary /w/<slug>, fallback ?s=<slug>.
+    // Default domain −5…5 per UX; backend default may be −10…10.
+    backend.updateViewport(DEFAULT_VIEW.x_min, DEFAULT_VIEW.x_max, DEFAULT_VIEW.y_min, DEFAULT_VIEW.y_max);
+    viewport = { ...DEFAULT_VIEW };
     const slug = slugFromLocation(window.location);
     if (slug) {
-      // Link loads reproduce the stored session: never seed demos here;
-      // restoreFromSlug sets functions/params/viewport/styles from the doc.
       await restoreFromSlug(slug);
     } else {
-      // Fixed demo curves so the 4.3 palette shows three ribbons; `f` flows
-      // through the formula bar below. Seeded only without a slug.
-      for (const c of DEMO_CURVES) {
-        if (c.id !== 'f') backend.setFunction(c.id, c.formula);
-      }
-      applyFormula(formula);
+      refresh();
     }
     const goOnline = () => (online = true);
     const goOffline = () => (online = false);
     window.addEventListener('online', goOnline);
     window.addEventListener('offline', goOffline);
-    const onPointer = (e) => {
-      if (!shareOpen) return;
-      const t = e.target;
-      if (panelEl?.contains(t) || shareButtonEl?.contains(t)) return;
-      shareOpen = false;
-    };
-    window.addEventListener('pointerdown', onPointer);
   });
+
+  const live = () => pointValues();
 </script>
 
 <main>
-  <h1>geogebra-rs — tracer bullet</h1>
+  <div class="hero">
+    <p class="eyebrow">YOUR FRIENDLY CALCULUS TOOL</p>
+    <h1>Make sense of <span class="accent">functions.</span></h1>
+  </div>
 
   {#if backend}
-    <p class="banner {backend.kind}">
+    <p class="banner {backend.kind}" aria-live="off">
       {#if backend.kind === 'rust'}
         Rust-backed math active (wasm-pack bundle loaded).
       {:else}
@@ -327,129 +454,343 @@
     <p class="banner fallback">Loading math backend…</p>
   {/if}
 
-  <div class="header-row">
-    <div class="formula-wrap">
-      <FormulaBar value={formula} {error} onInput={applyFormula} />
-    </div>
-    <button
-      class="share-button"
-      bind:this={shareButtonEl}
-      disabled={!backend || shareBusy || !online}
-      aria-expanded={shareOpen}
-      aria-controls="share-panel"
-      title={online ? 'Share this workspace' : "You're offline"}
-      onclick={shareOpen ? closeShare : handleShare}
-      onkeydown={handlePanelKey}
-    >
-      {shareBusy ? 'Saving…' : 'Share'}
-    </button>
-  </div>
+  <FormulaBar
+    value={draft}
+    {error}
+    {analyzing}
+    onInput={handleDraftInput}
+    onAnalyze={() => handleAnalyze()}
+    onClear={handleClear}
+    onTry={handleTry}
+  />
 
-  {#if shareOpen}
-    <div
-      id="share-panel"
-      class="share-panel"
-      bind:this={panelEl}
-      tabindex="-1"
-      role="dialog"
-      aria-label="Share workspace"
-      onkeydown={handlePanelKey}
-    >
-      <label class="share-label" for="slug-field">Workspace link</label>
-      <div class="share-row">
-        <input
-          id="slug-field"
-          class="slug-field"
-          bind:this={slugInputEl}
-          type="text"
-          readonly
-          value={shareSlug ? shareLink : ''}
-          placeholder={shareBusy ? 'Saving…' : '/w/--------'}
-          aria-readonly="true"
-        />
-        <button class="copy-control" disabled={!shareSlug} onclick={handleCopy}>Copy</button>
-        {#if shareRetry}
-          <button
-            class="retry-control"
-            bind:this={retryEl}
-            disabled={shareBusy || !online}
-            onclick={handleShare}
-          >Retry</button>
-        {/if}
+  <Sliders {params} onParam={handleParam} onCommit={handleParamCommit} />
+
+  <div class="workspace">
+    <div class="graph-col">
+      <div class="place-toggles">
+        <StyleControls {toggles} onToggle={handleToggle} />
       </div>
-      <p class="status-note {shareTone}" aria-live="polite">
-        {#if shareBusy}Saving…{:else if shareNote}{shareNote}{:else if shareSlug}Ready — copy the link.{/if}
-      </p>
+      <section class="card point-card" aria-label="Point analysis">
+        <p class="eyebrow">POINT ANALYSIS</p>
+        <div class="x-row">
+          <label for="point-x">x</label>
+          <input
+            id="point-x"
+            type="range"
+            min={viewport.x_min}
+            max={viewport.x_max}
+            step="0.1"
+            value={x0}
+            aria-label="Point on curve"
+            oninput={(e) => handleX0(parseFloat(e.target.value))}
+            onchange={(e) => handleX0Commit(parseFloat(e.target.value))}
+          />
+          <span class="x-pill">{format3(x0)}</span>
+        </div>
+        <div class="values">
+          <div class="value-row"><span>Function value</span><span class="mono-value">{live().value}</span></div>
+          <div class="value-row"><span>Instantaneous slope</span><span class="mono-value">{live().slope}</span></div>
+          <div class="value-row"><span>Local behavior</span><span class="behavior {live().behavior}">{live().behavior}</span></div>
+          <div class="value-row"><span>Tangent line</span><span class="mono-value small">{live().line}</span></div>
+        </div>
+        <div class="sr-live" aria-live="polite">
+          At x {format3(announced.x0)}, value {announced.value}, slope {announced.slope}, {announced.behavior}.
+        </div>
+      </section>
+      <div class="place-canvas">
+      <Canvas
+        {curves}
+        {viewport}
+        {grid}
+        {hover}
+        {markers}
+        {tangent}
+        {asymptotes}
+        showTangent={toggles.tangent !== false}
+        showMarkers={toggles.markers !== false}
+        {hasAnalyzed}
+        onViewport={handleViewport}
+        onHover={handleHover}
+        onLeave={() => (hover = null)}
+        onSize={(w, h) => backend?.setCanvasSize(w, h)}
+        onFps={(value) => (fps = value)}
+        onX0={handleX0}
+      >
+        <Tooltip {hover} />
+      </Canvas>
+      </div>
     </div>
-  {/if}
+    <div class="rail">
+      <section class="card deriv-card" aria-label="First derivative">
+        <div class="card-head">
+          <span class="eyebrow">FIRST DERIVATIVE</span>
+          {#if showBadge()}
+            <span class="badge"><span class="dot" aria-hidden="true"></span>CALCULATED</span>
+          {/if}
+        </div>
+        {#if hasAnalyzed && fPrimeDisplay}
+          <p class="mono" aria-live="polite">f′(x) = {fPrimeDisplay}</p>
+          <p class="body">The function's rate of change at every point.</p>
+          {#if fDoubleDisplay}
+            <p class="mono second">f″(x) = {fDoubleDisplay}</p>
+          {/if}
+        {:else}
+          <p class="mono placeholder">f′(x) = —</p>
+          <p class="body">Move along the curve</p>
+        {/if}
+      </section>
+
+      {#if hasAnalyzed}
+        <section class="share-row" aria-label="Share workspace">
+          <label class="share-label" for="slug-field">Share</label>
+          <div class="share-controls">
+            <input
+              id="slug-field"
+              class="slug-field"
+              bind:this={slugInputEl}
+              type="text"
+              readonly
+              value={shareSlug ? shareLink : ''}
+              placeholder={shareBusy ? 'Saving…' : '/w/--------'}
+              aria-readonly="true"
+            />
+            {#if !shareSlug}
+              <button
+                class="copy-control"
+                disabled={!backend || shareBusy || !online}
+                title={online ? 'Create and copy share link' : "You're offline — sharing needs a connection."}
+                onclick={handleShare}
+              >{shareBusy ? 'Saving…' : 'Copy'}</button>
+            {:else}
+              <button class="copy-control" onclick={handleCopy}>Copy</button>
+            {/if}
+            {#if shareRetry}
+              <button
+                class="retry-control"
+                disabled={shareBusy || !online}
+                onclick={handleShare}
+              >Retry</button>
+            {/if}
+          </div>
+          <p class="status-note {shareTone}" aria-live="polite">
+            {#if shareBusy}Saving…{:else if shareNote}{shareNote}{:else if shareSlug}Ready — copy the link.{:else if !online}You're offline — sharing needs a connection.{/if}
+          </p>
+        </section>
+      {/if}
+    </div>
+  </div>
 
   {#if loadNote}
     <p class="status-note danger load-note" aria-live="polite">{loadNote}</p>
   {/if}
 
-  <Canvas
-    {curves}
-    {viewport}
-    {grid}
-    {hover}
-    {markers}
-    {tangent}
-    {asymptotes}
-    onViewport={handleViewport}
-    onHover={handleHover}
-    onLeave={() => (hover = null)}
-    onSize={(w, h) => backend?.setCanvasSize(w, h)}
-    onFps={(value) => (fps = value)}
-  >
-    <Tooltip {hover} />
-  </Canvas>
-
-  {#each curves as curve (curve.id)}
-    <StyleControls
-      curveId={curve.id}
-      colorHex={curve.style.color}
-      widthPx={curve.style.widthPx}
-      dashed={curve.style.dashed}
-      visible={curve.style.visible}
-      onStyle={(hex) => handleStyle(curve.id, hex)}
-      onDashed={(dashed) => handleDashed(curve.id, dashed)}
-      onVisibility={(visible) => handleVisibility(curve.id, visible)}
-    />
-  {/each}
-
-  <Sliders {params} onParam={handleParam} />
-
-  <div class="sliders x0-slider">
-    <div class="slider-row">
-      <label for="slider-x0"><code>x0 = {Number(x0).toFixed(2)}</code></label>
-      <input
-        id="slider-x0"
-        type="range"
-        min={viewport.x_min}
-        max={viewport.x_max}
-        step={(viewport.x_max - viewport.x_min) / 400 || 0.01}
-        value={x0}
-        aria-label="x0 slider"
-        title="x0 = {x0}"
-        oninput={(e) => handleX0(parseFloat(e.target.value))}
-      />
-      <input
-        type="number"
-        step="0.1"
-        value={x0}
-        aria-label="x0 value"
-        oninput={(e) => handleX0(parseFloat(e.target.value))}
-      />
-    </div>
-  </div>
-
   {#if workspace}
-    <!-- Workspace JSON owned shape for Epic 5: {version:1, functions, params, viewport, style}.
-         Restored via setFunction + updateParam + updateViewport + the style
-         setters (AD-5, no new ABI). -->
-    <details class="workspace">
+    <details class="workspace-json">
       <summary>workspace JSON (version {workspace.version})</summary>
       <pre>{JSON.stringify(workspace, null, 2)}</pre>
     </details>
   {/if}
 </main>
+
+<style>
+  main {
+    max-width: 1120px;
+  }
+  .hero {
+    margin: 16px 0;
+  }
+  .hero .eyebrow {
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.12em;
+    color: #6e6b8a;
+    margin: 0 0 8px;
+  }
+  .hero h1 {
+    font-size: 34px;
+    font-weight: 800;
+    line-height: 1.15;
+    letter-spacing: -0.02em;
+    color: #1e1b33;
+    margin: 0;
+  }
+  .hero .accent {
+    color: #4f46e5;
+  }
+  .workspace {
+    display: grid;
+    grid-template-columns: 2fr 1fr;
+    column-gap: 24px;
+    row-gap: 16px;
+    margin-top: 16px;
+  }
+  /* DOM order (toggles → point → markers → share) is the tab order;
+     display:contents + explicit placement preserves the layout.png visual
+     (legend + canvas left, derivative + point + share right). */
+  .graph-col,
+  .rail {
+    display: contents;
+  }
+  .place-toggles {
+    grid-column: 1;
+    grid-row: 1;
+  }
+  .place-canvas {
+    grid-column: 1;
+    grid-row: 2;
+    min-width: 0;
+  }
+  .deriv-card {
+    grid-column: 2;
+    grid-row: 1;
+  }
+  .point-card {
+    grid-column: 2;
+    grid-row: 2;
+  }
+  .share-row {
+    grid-column: 2;
+    grid-row: 3;
+  }
+  .card {
+    background: #ffffff;
+    border: 1px solid #e6e5f1;
+    border-radius: 14px;
+    padding: 16px;
+  }
+  .card-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+  .eyebrow {
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    color: #6e6b8a;
+  }
+  .badge {
+    font-size: 12px;
+    color: #16a34a;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .badge .dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 9999px;
+    background: #16a34a;
+  }
+  .mono {
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 15px;
+    font-weight: 500;
+  }
+  .mono.placeholder {
+    color: #9c99b8;
+  }
+  .mono.second {
+    margin-top: 8px;
+  }
+  .body {
+    font-size: 14px;
+    color: #1e1b33;
+  }
+  .x-row {
+    display: flex;
+    gap: 12px;
+    align-items: center;
+    margin: 12px 0;
+  }
+  .x-row input[type='range'] {
+    flex: 1;
+    accent-color: #4f46e5;
+  }
+  .x-pill {
+    background: #f1f0fa;
+    border-radius: 9999px;
+    padding: 4px 12px;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 13px;
+    font-weight: 600;
+  }
+  .values {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+  .value-row {
+    display: flex;
+    justify-content: space-between;
+    gap: 12px;
+    font-size: 14px;
+    color: #6e6b8a;
+  }
+  .mono-value {
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 13px;
+    font-weight: 600;
+    color: #1e1b33;
+  }
+  .mono-value.small {
+    font-size: 12px;
+  }
+  .behavior.Increasing {
+    color: #16a34a;
+  }
+  .behavior.Decreasing {
+    color: #6e6b8a;
+  }
+  .behavior.Stationary {
+    color: #e8930c;
+  }
+  .share-row {
+    background: #f1f0fa;
+    border-radius: 10px;
+    padding: 12px;
+  }
+  .share-label {
+    display: block;
+    font-size: 13px;
+    font-weight: 600;
+    margin-bottom: 4px;
+  }
+  .share-controls {
+    display: flex;
+    gap: 8px;
+  }
+  .slug-field {
+    flex: 1;
+    min-width: 0;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 14px;
+    font-weight: 600;
+    border: 1px solid #e6e5f1;
+    border-radius: 6px;
+    padding: 8px;
+    min-height: 44px;
+  }
+  .copy-control,
+  .retry-control {
+    border: 1px solid #e6e5f1;
+    background: #fff;
+    border-radius: 6px;
+    padding: 8px 12px;
+    min-height: 44px;
+    cursor: pointer;
+  }
+  .sr-live {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+  }
+  @media (prefers-reduced-motion: reduce) {
+    * {
+      transition: none !important;
+    }
+  }
+</style>

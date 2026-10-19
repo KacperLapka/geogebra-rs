@@ -1,31 +1,48 @@
 <script>
-  // Multi-curve canvas (4.3): `curves` is a list of `{id, points, style}`
-  // with per-curve `{color, widthPx, dashed, visible}`. Legacy single-curve
-  // `points`/`style` props still work: they render as one curve.
-  // Calculus overlays (2.6): `markers` is `[{kind, x, y}]` and `tangent` is
-  // `{from, to}` in math coords, stroked verbatim from Rust (AD-4).
-  // Vertical asymptotes (3.1): `asymptotes` is `[{x, from, to}]` in math
-  // coords, stroked dashed verbatim from Rust.
-  let { curves, points, viewport, grid, hover, style, markers, tangent, asymptotes, onViewport, onHover, onLeave, onSize, onFps, children } = $props();
+  // Graph canvas: 2D dirty-rAF loop presenting Rust-owned geometry.
+  // Curves + grid + tangent + asymptotes stroke on canvas; analysis markers
+  // are DOM buttons positioned via the same toScreen mapping (xFrac/yFrac
+  // percentages) updated in the same frame as curves — never layout-thrash,
+  // 60 FPS under 16ms. Svelte positions tooltips only, never spatial math.
+  // Fixed DESIGN palette: f indigo solid, f' green dashed, f'' purple
+  // dashed, tangent amber dashed, asymptotes gray dashed.
+  import { onMount } from 'svelte';
+
+  let {
+    curves,
+    viewport,
+    grid,
+    hover,
+    markers,
+    tangent,
+    asymptotes,
+    showTangent = true,
+    showMarkers = true,
+    hasAnalyzed = false,
+    onViewport,
+    onHover,
+    onLeave,
+    onSize,
+    onFps,
+    onX0,
+    children
+  } = $props();
 
   let canvas = $state(null);
   let ctx = $state(null);
   let dragging = $state(false);
   let last = $state(null);
-  // Viewport loop: data effects mark the frame dirty, the rAF loop below
-  // presents it. Pan/zoom streams viewport updates; the loop draws at most
-  // once per frame, so continuous drags never queue blank frames.
   let dirty = $state(true);
+  let webglFail = $state(false);
+
+  const DEFAULT_VIEW = { x_min: -5, x_max: 5, y_min: -5, y_max: 5 };
 
   const toScreen = (x, y, w, h) => [
     ((x - viewport.x_min) / (viewport.x_max - viewport.x_min)) * w,
     ((viewport.y_max - y) / (viewport.y_max - viewport.y_min)) * h
   ];
 
-  // DOM label positioning only: fraction along each axis via the same
-  // `toScreen` mapping above (no tick math here; Rust owns ticks). Labels
-  // render in the overlay below and may lag the canvas stroke by one frame
-  // during continuous drag, per E4-VIEWPORT-GRID.
+  // DOM overlay positioning only (percentages, same mapping as toScreen).
   const xFrac = (v) => (v - viewport.x_min) / (viewport.x_max - viewport.x_min);
   const yFrac = (v) => (viewport.y_max - v) / (viewport.y_max - viewport.y_min);
   const xSpanOk = () =>
@@ -33,13 +50,30 @@
   const ySpanOk = () =>
     Number.isFinite(viewport.y_max - viewport.y_min) && viewport.y_max > viewport.y_min;
 
+  const MARKER_STYLE = {
+    root: { color: '#dc2626', label: 'Root' },
+    min: { color: '#4f46e5', label: 'Minimum' },
+    max: { color: '#4f46e5', label: 'Maximum' },
+    inflection: { color: '#1fa36b', label: 'Inflection' }
+  };
+  const markerMeta = (m) => MARKER_STYLE[m?.kind] ?? { color: '#4f46e5', label: m?.kind ?? 'Marker' };
+  const markerLabel = (m) => {
+    const meta = markerMeta(m);
+    const xs = Number.isFinite(m.x) ? Number(m.x).toFixed(2) : '—';
+    return `${meta.label} at x = ${xs}`;
+  };
+  const markerTip = (m) => {
+    const f = (v) => (Number.isFinite(v) ? Number(v).toFixed(3) : '—');
+    return `(${f(m.x)}, ${f(m.y)})`;
+  };
+
   function fitCanvas() {
     if (!canvas) return;
     const rect = canvas.getBoundingClientRect();
     const dpr = window.devicePixelRatio || 1;
     canvas.width = Math.max(1, Math.round(rect.width * dpr));
     canvas.height = Math.max(1, Math.round(rect.height * dpr));
-    onSize(rect.width, rect.height);
+    onSize?.(rect.width, rect.height);
     dirty = true;
   }
 
@@ -51,20 +85,18 @@
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.clearRect(0, 0, w, h);
 
-    // grid: Rust-owned majors sync plus faint minors, same frame.
-    // Majors use the established tone; minors subdivide strictly between
-    // majors (÷5, or ÷4 for 2-mantissa steps) at a fainter alpha.
+    // Grid: Rust-owned majors + faint minors, same frame.
     ctx.strokeStyle = '#8883';
     ctx.lineWidth = 1;
     ctx.beginPath();
-    for (const t of grid.x ?? []) {
+    for (const t of grid?.x ?? []) {
       if (!Number.isFinite(t)) continue;
       const [px] = toScreen(t, 0, w, h);
       if (!Number.isFinite(px)) continue;
       ctx.moveTo(px, 0);
       ctx.lineTo(px, h);
     }
-    for (const t of grid.y ?? []) {
+    for (const t of grid?.y ?? []) {
       if (!Number.isFinite(t)) continue;
       const [, py] = toScreen(0, t, w, h);
       if (!Number.isFinite(py)) continue;
@@ -75,14 +107,14 @@
     ctx.strokeStyle = '#8882';
     ctx.lineWidth = 1;
     ctx.beginPath();
-    for (const t of grid.x_minor ?? []) {
+    for (const t of grid?.x_minor ?? []) {
       if (!Number.isFinite(t)) continue;
       const [px] = toScreen(t, 0, w, h);
       if (!Number.isFinite(px)) continue;
       ctx.moveTo(px, 0);
       ctx.lineTo(px, h);
     }
-    for (const t of grid.y_minor ?? []) {
+    for (const t of grid?.y_minor ?? []) {
       if (!Number.isFinite(t)) continue;
       const [, py] = toScreen(0, t, w, h);
       if (!Number.isFinite(py)) continue;
@@ -91,7 +123,7 @@
     }
     ctx.stroke();
 
-    // axes
+    // Axes.
     ctx.strokeStyle = '#888a';
     ctx.beginPath();
     {
@@ -106,18 +138,22 @@
     }
     ctx.stroke();
 
-    // curves (breaks on null y; skipped when the style hides it)
-    // One draw block per curve: colour, clamped width, dash + offset reset,
-    // visibility skip. Viewport/hover math untouched.
-    const list = curves ?? (points ? [{ id: 'f', points, style }] : []);
+    // Curves: fixed DESIGN palette wins; bridge styles already set to it on
+    // Analyze, fallback here keeps the canvas honest if a style lags.
+    const DESIGN_FALLBACK = {
+      f: { color: '#4f46e5', dashed: false },
+      fp: { color: '#1fa36b', dashed: true },
+      fpp: { color: '#9333ea', dashed: true }
+    };
+    const list = curves ?? [];
     for (const curve of list) {
-      const st = curve.style ?? style;
-      if (st?.visible === false) continue;
-      ctx.strokeStyle = st?.color ?? '#2563eb';
-      // Clamp like every other layer: ABI + shader enforce [2.5, 6.0].
-      ctx.lineWidth = Number.isFinite(st?.widthPx) ? Math.min(6.0, Math.max(2.5, st.widthPx)) : 3.5;
-      // 2D parity with the GPU dash: 8px-on / 6px-off screen-space, solid resets.
-      ctx.setLineDash(st?.dashed ? [8, 6] : []);
+      const st = curve.style ?? {};
+      if (st.visible === false) continue;
+      const fb = DESIGN_FALLBACK[curve.id];
+      ctx.strokeStyle = st.color ?? fb?.color ?? '#4f46e5';
+      ctx.lineWidth = Number.isFinite(st.widthPx) ? Math.min(6.0, Math.max(2.5, st.widthPx)) : 2.5;
+      const dashed = st.dashed ?? fb?.dashed ?? curve.id !== 'f';
+      ctx.setLineDash(dashed ? [8, 6] : []);
       ctx.lineDashOffset = 0;
       ctx.beginPath();
       let pen = false;
@@ -127,8 +163,11 @@
           continue;
         }
         const [px, py] = toScreen(x, y, w, h);
+        if (!Number.isFinite(px) || !Number.isFinite(py)) {
+          pen = false;
+          continue;
+        }
         if (!pen) {
-          // GPU restarts arclength at each NaN break: restart 2D dash phase too.
           ctx.lineDashOffset = 0;
           ctx.moveTo(px, py);
           pen = true;
@@ -141,31 +180,31 @@
     ctx.setLineDash([]);
     ctx.lineDashOffset = 0;
 
-    // tangent segment (2.6): Rust-computed math coords stroked verbatim.
-    if (tangent && Array.isArray(tangent.from) && Array.isArray(tangent.to)) {
+    // Tangent (amber dashed) — canvas-only toggle, never refires analysis.
+    if (showTangent && tangent && Array.isArray(tangent.from) && Array.isArray(tangent.to)) {
       const [ax, ay] = toScreen(tangent.from[0], tangent.from[1], w, h);
       const [bx, by] = toScreen(tangent.to[0], tangent.to[1], w, h);
       if ([ax, ay, bx, by].every(Number.isFinite)) {
-        ctx.strokeStyle = '#ea580c';
+        ctx.strokeStyle = '#e8930c';
         ctx.lineWidth = 2;
-        ctx.setLineDash([]);
+        ctx.setLineDash([8, 6]);
         ctx.lineDashOffset = 0;
         ctx.beginPath();
         ctx.moveTo(ax, ay);
         ctx.lineTo(bx, by);
         ctx.stroke();
+        ctx.setLineDash([]);
       }
     }
 
-    // vertical asymptotes (3.1): Rust-computed x with viewport-spanning
-    // endpoints stroked verbatim, dashed [8,6] like the curve dash parity.
+    // Asymptotes (gray dashed, never bridged — NaN breaks above).
     for (const a of asymptotes ?? []) {
       if (!a || !Array.isArray(a.from) || !Array.isArray(a.to)) continue;
       if (!Number.isFinite(a.x)) continue;
       const [ax, ay] = toScreen(a.from[0], a.from[1], w, h);
       const [bx, by] = toScreen(a.to[0], a.to[1], w, h);
       if (![ax, ay, bx, by].every(Number.isFinite)) continue;
-      ctx.strokeStyle = '#6b7280';
+      ctx.strokeStyle = '#b9b8d0';
       ctx.lineWidth = 1.5;
       ctx.setLineDash([8, 6]);
       ctx.lineDashOffset = 0;
@@ -177,28 +216,15 @@
     ctx.setLineDash([]);
     ctx.lineDashOffset = 0;
 
-    // marker circles (2.6): per-kind fill, white ring for contrast.
-    const MARKER_COLORS = { root: '#dc2626', min: '#16a34a', max: '#d97706', inflection: '#9333ea' };
-    for (const m of markers ?? []) {
-      if (!m || !Number.isFinite(m.x) || !Number.isFinite(m.y)) continue;
-      const [mx, my] = toScreen(m.x, m.y, w, h);
-      if (!Number.isFinite(mx) || !Number.isFinite(my)) continue;
-      ctx.fillStyle = MARKER_COLORS[m.kind] ?? '#dc2626';
-      ctx.strokeStyle = '#ffffff';
-      ctx.lineWidth = 2;
-      ctx.beginPath();
-      ctx.arc(mx, my, 5, 0, 2 * Math.PI);
-      ctx.fill();
-      ctx.stroke();
-    }
-
-    // hover marker
-    if (hover && hover.math_y !== null && hover.math_y !== undefined) {
+    // Hover marker (2D dot, not a keyboard marker).
+    if (hover && hover.math_y !== null && hover.math_y !== undefined && Number.isFinite(hover.math_y)) {
       const [hx, hy] = toScreen(hover.math_x, hover.math_y, w, h);
-      ctx.fillStyle = '#dc2626';
-      ctx.beginPath();
-      ctx.arc(hx, hy, 4, 0, 2 * Math.PI);
-      ctx.fill();
+      if (Number.isFinite(hx) && Number.isFinite(hy)) {
+        ctx.fillStyle = '#dc2626';
+        ctx.beginPath();
+        ctx.arc(hx, hy, 4, 0, 2 * Math.PI);
+        ctx.fill();
+      }
     }
   }
 
@@ -207,11 +233,26 @@
     return [e.clientX - rect.left, e.clientY - rect.top, rect.width, rect.height];
   }
 
+  function zoomAt(factor, cxFrac = 0.5, cyFrac = 0.5) {
+    const xw = viewport.x_max - viewport.x_min;
+    const yw = viewport.y_max - viewport.y_min;
+    const nxw = Math.min(1e6, Math.max(1e-6, xw * factor));
+    const nyw = Math.min(1e6, Math.max(1e-6, yw * factor));
+    const cx = viewport.x_min + cxFrac * xw;
+    const cy = viewport.y_max - cyFrac * yw;
+    onViewport?.({
+      x_min: cx - cxFrac * nxw,
+      x_max: cx + (1 - cxFrac) * nxw,
+      y_min: cy - (1 - cyFrac) * nyw,
+      y_max: cy + cyFrac * nyw
+    });
+  }
+
   function wheel(e) {
     e.preventDefault();
     const [px, py, w, h] = pos(e);
-    const fx = px / w;
-    const fy = py / h;
+    const fx = w ? px / w : 0.5;
+    const fy = h ? py / h : 0.5;
     const k = e.deltaY > 0 ? 1.15 : 1 / 1.15;
     const xw = viewport.x_max - viewport.x_min;
     const yw = viewport.y_max - viewport.y_min;
@@ -219,7 +260,7 @@
     const nyw = Math.min(1e6, Math.max(1e-6, yw * k));
     const cx = viewport.x_min + fx * xw;
     const cy = viewport.y_max - fy * yw;
-    onViewport({
+    onViewport?.({
       x_min: cx - fx * nxw,
       x_max: cx + (1 - fx) * nxw,
       y_min: cy - (1 - fy) * nyw,
@@ -235,13 +276,13 @@
 
   function move(e) {
     const [px, py, w, h] = pos(e);
-    onHover(px, py);
+    onHover?.(px, py);
     if (!dragging) return;
     const [lx, ly] = last;
     const dx = ((lx - px) / w) * (viewport.x_max - viewport.x_min);
     const dy = ((py - ly) / h) * (viewport.y_max - viewport.y_min);
     last = [px, py, w, h];
-    onViewport({
+    onViewport?.({
       x_min: viewport.x_min + dx,
       x_max: viewport.x_max + dx,
       y_min: viewport.y_min + dy,
@@ -254,12 +295,23 @@
     last = null;
   }
 
+  function fmtDomain(v) {
+    if (!Number.isFinite(v)) return '—';
+    const s = Math.abs(v) < 1e-9 ? '0' : String(Math.round(v * 100) / 100);
+    return s.replace('-', '−');
+  }
+
+  const hasPoints = $derived(
+    curves?.some((c) => (c.points ?? []).some((p) => p[1] !== null && p[1] !== undefined)) ?? false
+  );
+  const allCurvesHidden = $derived(
+    !!(curves?.length && !(curves?.some((c) => c.style?.visible !== false)))
+  );
+  const allOff = $derived(!!(hasAnalyzed && allCurvesHidden && !showTangent && !showMarkers));
+
   $effect(() => {
     if (canvas && !ctx) ctx = canvas.getContext('2d');
     fitCanvas();
-
-    // Canvas event loop: present dirty frames, meter the 60 FPS baseline.
-    // FPS is reported at most once per second to keep parent state calm.
     let raf = 0;
     let frames = 0;
     let windowStart = performance.now();
@@ -287,63 +339,166 @@
   });
 
   $effect(() => {
-    // mark dirty on data changes; the loop presents
     void curves;
-    void points;
     void viewport;
     void grid;
     void hover;
-    void style;
     void markers;
     void tangent;
     void asymptotes;
+    void showTangent;
+    void showMarkers;
     dirty = true;
+  });
+
+  onMount(async () => {
+    // Double-failure fallback only: WebGPU first, WebGL2 retry; the message
+    // shows solely when both fail, workspace stays usable on 2D.
+    try {
+      let ok = false;
+      if (typeof navigator !== 'undefined' && navigator.gpu?.requestAdapter) {
+        try {
+          const a = await navigator.gpu.requestAdapter();
+          if (a) ok = true;
+        } catch {
+          ok = false;
+        }
+      }
+      if (!ok && canvas) {
+        try {
+          const gl = document.createElement('canvas').getContext('webgl2');
+          if (gl) ok = true;
+        } catch {
+          ok = false;
+        }
+      }
+      webglFail = !ok;
+    } catch {
+      webglFail = true;
+    }
   });
 </script>
 
 <svelte:window onresize={fitCanvas} />
 
-<div class="canvas-wrap">
-  <canvas
-    bind:this={canvas}
-    onwheel={wheel}
-    onpointerdown={down}
-    onpointermove={move}
-    onpointerup={up}
-    onpointerleave={() => {
-      up();
-      onLeave();
-    }}
-  ></canvas>
-  <!-- Tick labels: transparent DOM overlay only (never canvas text/atlas).
-       Positioned from bridge `{value, text}` via the `toScreen` fractions
-       above; geometry strokes sync while these may lag one frame. -->
-  <div class="grid-overlay" aria-hidden="true">
-    {#if xSpanOk()}
-      {#each grid?.x_labels ?? [] as l (l.value)}
-        {#if Number.isFinite(l?.value) && typeof l?.text === 'string'}
-          <span class="grid-label x" style="left: {xFrac(l.value) * 100}%">{l.text}</span>
-        {/if}
-      {/each}
+<div class="graph-card">
+  <div class="toolbar">
+    <span class="domain" aria-live="off">Showing x from {fmtDomain(viewport.x_min)} to {fmtDomain(viewport.x_max)}</span>
+    <span class="spacer"></span>
+    <button type="button" class="tool" aria-label="Zoom in" title="Zoom in" onclick={() => zoomAt(1 / 1.25)}>+</button>
+    <button type="button" class="tool" aria-label="Zoom out" title="Zoom out" onclick={() => zoomAt(1.25)}>−</button>
+    <button type="button" class="tool" aria-label="Reset view" title="Reset view" onclick={() => onViewport?.({ ...DEFAULT_VIEW })}>Reset</button>
+  </div>
+  <div class="canvas-wrap">
+    <!-- svelte-ignore a11y_no_interactive_element_to_noninteractive_role -->
+    <canvas
+      bind:this={canvas}
+      role="img"
+      aria-label={markers?.length ? `Graph with ${markers.length} analysis markers` : 'Graph of the analyzed function'}
+      onwheel={wheel}
+      onpointerdown={down}
+      onpointermove={move}
+      onpointerup={up}
+      onpointerleave={() => {
+        up();
+        onLeave?.();
+      }}
+    ></canvas>
+    <div class="grid-overlay" aria-hidden="true">
+      {#if xSpanOk()}
+        {#each grid?.x_labels ?? [] as l (l.value)}
+          {#if Number.isFinite(l?.value) && typeof l?.text === 'string'}
+            <span class="grid-label x" style="left: {xFrac(l.value) * 100}%">{l.text}</span>
+          {/if}
+        {/each}
+      {/if}
+      {#if ySpanOk()}
+        {#each grid?.y_labels ?? [] as l (l.value)}
+          {#if Number.isFinite(l?.value) && typeof l?.text === 'string'}
+            <span class="grid-label y" style="top: {yFrac(l.value) * 100}%">{l.text}</span>
+          {/if}
+        {/each}
+      {/if}
+    </div>
+    {#if showMarkers}
+      <div class="marker-layer">
+        {#each (markers ?? []) as m (m.kind + ':' + m.x + ':' + m.y)}
+          {#if Number.isFinite(m.x) && Number.isFinite(m.y) && xSpanOk() && ySpanOk()}
+            {@const meta = markerMeta(m)}
+            <button
+              type="button"
+              class="marker"
+              style="left:{xFrac(m.x) * 100}%;top:{yFrac(m.y) * 100}%;--marker-color:{meta.color}"
+              aria-label={markerLabel(m)}
+              title={markerTip(m)}
+              onclick={() => {
+                if (Number.isFinite(m.x)) onX0?.(m.x);
+              }}
+            >
+              <span class="dot" aria-hidden="true"></span>
+              <span class="tip" aria-hidden="true">{markerTip(m)}</span>
+            </button>
+          {/if}
+        {/each}
+      </div>
     {/if}
-    {#if ySpanOk()}
-      {#each grid?.y_labels ?? [] as l (l.value)}
-        {#if Number.isFinite(l?.value) && typeof l?.text === 'string'}
-          <span class="grid-label y" style="top: {yFrac(l.value) * 100}%">{l.text}</span>
-        {/if}
-      {/each}
+    {@render children?.()}
+    {#if !allOff && !hasPoints}
+      <div class="empty-hint">Type a function and hit Analyze.</div>
+    {/if}
+    {#if allOff}
+      <div class="empty-hint">All layers off — toggling any curve back on restores the canvas.</div>
     {/if}
   </div>
-  {@render children?.()}
+  {#if webglFail}
+    <p class="fallback-note" role="note">Your browser can't draw the graph. Try a recent Chrome, Edge, or Firefox.</p>
+  {/if}
+  <p class="sr-only">Graph canvas fallback: use the point analysis values for exact coordinates.</p>
 </div>
 
 <style>
+  .graph-card {
+    background: #ffffff;
+    border: 1px solid #e6e5f1;
+    border-radius: 14px;
+    padding: 12px;
+  }
+  .toolbar {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 8px;
+  }
+  .domain {
+    font-size: 12px;
+    color: #6e6b8a;
+  }
+  .spacer {
+    flex: 1;
+  }
+  .tool {
+    border: 1px solid #e6e5f1;
+    background: #fff;
+    border-radius: 6px;
+    min-width: 44px;
+    min-height: 44px;
+    font-size: 16px;
+    cursor: pointer;
+    color: #1e1b33;
+  }
+  .tool:focus-visible {
+    outline: 2px solid #4f46e5;
+    outline-offset: 2px;
+  }
   .canvas-wrap {
     position: relative;
+    touch-action: none;
   }
   .canvas-wrap canvas {
     display: block;
     width: 100%;
+    height: 420px;
+    cursor: crosshair;
   }
   .grid-overlay {
     position: absolute;
@@ -355,7 +510,7 @@
     position: absolute;
     font-size: 10px;
     line-height: 1;
-    color: #6b7280;
+    color: #9c99b8;
     background: transparent;
     white-space: nowrap;
     pointer-events: none;
@@ -367,5 +522,83 @@
   .grid-label.y {
     left: 4px;
     transform: translateY(-50%);
+  }
+  .marker-layer {
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+  }
+  .marker {
+    position: absolute;
+    transform: translate(-50%, -50%);
+    background: transparent;
+    border: none;
+    padding: 16px;
+    margin: -16px;
+    min-width: 44px;
+    min-height: 44px;
+    cursor: pointer;
+    pointer-events: auto;
+  }
+  .marker:focus-visible {
+    outline: 2px solid #4f46e5;
+    outline-offset: 2px;
+    border-radius: 9999px;
+  }
+  .marker .dot {
+    display: block;
+    width: 12px;
+    height: 12px;
+    border-radius: 9999px;
+    background: var(--marker-color);
+    border: 2px solid #fff;
+    box-shadow: 0 0 0 1px var(--marker-color);
+    margin: auto;
+  }
+  .marker .tip {
+    display: none;
+    position: absolute;
+    left: 50%;
+    top: -8px;
+    transform: translate(-50%, -100%);
+    background: rgba(30, 27, 51, 0.92);
+    color: #fff;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 12px;
+    padding: 4px 8px;
+    border-radius: 6px;
+    white-space: nowrap;
+  }
+  .marker:hover .tip,
+  .marker:focus-visible .tip {
+    display: block;
+  }
+  .empty-hint {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: #9c99b8;
+    font-size: 14px;
+    pointer-events: none;
+  }
+  .fallback-note {
+    color: #6e6b8a;
+    font-size: 13px;
+    margin: 8px 0 0;
+  }
+  .sr-only {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .marker,
+    .tool {
+      transition: none;
+    }
   }
 </style>

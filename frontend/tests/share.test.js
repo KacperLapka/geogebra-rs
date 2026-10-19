@@ -150,14 +150,18 @@ test('restore drives setFunction + updateParam + updateViewport only', () => {
 test('App.svelte wires Share adjacent to FormulaBar with panel states', () => {
   const app = read('src/App.svelte');
   assert.ok(app.includes('Share'), 'Share control must exist');
-  assert.ok(app.includes('share-panel'), 'share panel must exist');
+  assert.ok(app.includes('share-row'), 'share row must exist (gated after first Analyze)');
   assert.ok(app.includes('Saving…'), 'saving state must use UX microcopy');
-  assert.ok(app.includes('Link copied.'), 'copied confirmation must use UX microcopy');
+  assert.ok(app.includes('Copied.'), 'copied confirmation must use UX microcopy');
   assert.ok(app.includes('Unknown workspace. Check the link and try again.'), '404 text must match UX');
   assert.ok(app.includes('Workspace too large to share.'), '413 text must match UX');
   assert.ok(
-    app.includes("You're offline. Showing your local workspace."),
+    app.includes("You're offline — sharing needs a connection."),
     'offline text must match UX'
+  );
+  assert.ok(
+    app.includes("Couldn't create the link. Try again."),
+    'failure retry text must match UX'
   );
   assert.ok(app.includes('aria-live'), 'status note must be a live region');
   assert.ok(app.includes('slugFromLocation'), 'load must handle /w/<slug> + ?s fallback');
