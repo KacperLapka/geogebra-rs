@@ -4,7 +4,17 @@
   import Canvas from './Canvas.svelte';
   import Tooltip from './Tooltip.svelte';
   import Sliders from './Sliders.svelte';
+  import StyleControls from './StyleControls.svelte';
   import { getBackend } from './lib/wasm.js';
+  import {
+    isSlug,
+    slugFromLocation,
+    shortlink,
+    shareUrl,
+    saveWorkspace,
+    loadWorkspace,
+    restoreWorkspace
+  } from './lib/share.js';
 
   let backend = $state(null);
   let formula = $state('a*x^2');
@@ -17,6 +27,22 @@
   let workspace = $state(null);
   let gpu = $state({ status: 'cpu-fallback', viewport_revision: 0 });
   let fps = $state(null);
+  // Render-owned style mirror for the tracer curve `f`: hex stays local for
+  // the 2D stroke, width/visibility sync from the bridge return values.
+  let style = $state({ color: '#2563eb', widthPx: 3.5, visible: true });
+
+  // Share/load tracer (5.1): Share button + panel + /w/<slug> and ?s=<slug>.
+  let shareOpen = $state(false);
+  let shareBusy = $state(false);
+  let shareSlug = $state(null);
+  let shareLink = $state('');
+  let shareNote = $state('');
+  let shareTone = $state('muted');
+  let loadNote = $state('');
+  let online = $state(typeof navigator !== 'undefined' ? (navigator.onLine ?? true) : true);
+  let shareButtonEl = $state(null);
+  let panelEl = $state(null);
+  let slugInputEl = $state(null);
 
   function refresh() {
     if (!backend) return;
@@ -67,10 +93,120 @@
     hover = { px, py, math_x: res.math_x, math_y: res.math_y, marker: res.marker ?? null };
   }
 
+  function handleStyle(colorHex) {
+    if (!backend || !/^#[0-9a-fA-F]{6}$/.test(colorHex)) return;
+    const res = backend.setFunctionStyle('f', colorHex, style.widthPx, false);
+    style = { color: colorHex, widthPx: res?.width_px ?? style.widthPx, visible: res?.visible ?? style.visible };
+  }
+
+  function handleVisibility(visible) {
+    if (!backend) return;
+    const res = backend.setFunctionVisibility('f', !!visible);
+    style = { ...style, visible: res?.visible ?? !!visible };
+  }
+
+  function closeShare() {
+    shareOpen = false;
+    shareButtonEl?.focus?.();
+  }
+
+  function handlePanelKey(e) {
+    if (e.key === 'Escape') {
+      e.stopPropagation();
+      closeShare();
+    }
+  }
+
+  async function handleShare() {
+    if (!backend || shareBusy || !online) return;
+    shareOpen = true;
+    shareBusy = true;
+    shareSlug = null;
+    shareLink = '';
+    shareNote = 'Saving…';
+    shareTone = 'muted';
+    // Focus the panel for keyboard users once it renders.
+    queueMicrotask(() => panelEl?.focus?.());
+    const doc = backend.serializeWorkspace();
+    const res = await saveWorkspace(doc);
+    shareBusy = false;
+    if (res.ok) {
+      shareSlug = res.slug;
+      shareLink = shortlink(res.slug);
+      shareNote = '';
+      queueMicrotask(() => slugInputEl?.select?.());
+    } else if (res.error === 'too-large') {
+      shareNote = 'Workspace too large to share.';
+      shareTone = 'danger';
+    } else if (res.error === 'network' || !online) {
+      shareNote = "You're offline. Showing your local workspace.";
+      shareTone = 'muted';
+    } else {
+      shareNote = 'Could not share this workspace.';
+      shareTone = 'danger';
+    }
+  }
+
+  async function handleCopy() {
+    if (!shareSlug) return;
+    const full = shareUrl(shareSlug, window.location.origin);
+    try {
+      await navigator.clipboard.writeText(full);
+    } catch {
+      // Clipboard blocked (projector rooms, locked-down browsers):
+      // fall back to manual selection of the slug field.
+      slugInputEl?.select?.();
+      return;
+    }
+    shareNote = 'Link copied.';
+    shareTone = 'success';
+  }
+
+  async function restoreFromSlug(slug) {
+    if (!backend || !isSlug(slug)) return;
+    const loaded = await loadWorkspace(slug);
+    if (!loaded.ok) {
+      if (loaded.error === 'unknown') {
+        loadNote = 'Unknown workspace. Check the link and try again.';
+      } else if (loaded.error === 'network') {
+        loadNote = "You're offline. Showing your local workspace.";
+      } else {
+        loadNote = 'Could not load this workspace.';
+      }
+      return;
+    }
+    const doc = loaded.doc;
+    const res = restoreWorkspace(backend, doc);
+    if (!res.ok) {
+      loadNote = 'Could not load this workspace.';
+      return;
+    }
+    if (typeof doc.functions?.f === 'string') formula = doc.functions.f;
+    params = { ...doc.params };
+    viewport = { ...doc.viewport };
+    error = null;
+    loadNote = '';
+    refresh();
+  }
+
   onMount(async () => {
     backend = await getBackend();
     backend.setCanvasSize(800, 420);
     applyFormula(formula);
+    const goOnline = () => (online = true);
+    const goOffline = () => (online = false);
+    window.addEventListener('online', goOnline);
+    window.addEventListener('offline', goOffline);
+    const onPointer = (e) => {
+      if (!shareOpen) return;
+      const t = e.target;
+      if (panelEl?.contains(t) || shareButtonEl?.contains(t)) return;
+      shareOpen = false;
+    };
+    window.addEventListener('pointerdown', onPointer);
+    // Shared link view: primary /w/<slug>, fallback ?s=<slug>.
+    const slug = slugFromLocation(window.location);
+    if (slug) await restoreFromSlug(slug);
   });
 </script>
 
@@ -90,13 +226,64 @@
     <p class="banner fallback">Loading math backend…</p>
   {/if}
 
-  <FormulaBar value={formula} {error} onInput={applyFormula} />
+  <div class="header-row">
+    <div class="formula-wrap">
+      <FormulaBar value={formula} {error} onInput={applyFormula} />
+    </div>
+    <button
+      class="share-button"
+      bind:this={shareButtonEl}
+      disabled={!backend || shareBusy || !online}
+      aria-expanded={shareOpen}
+      aria-controls="share-panel"
+      title={online ? 'Share this workspace' : "You're offline"}
+      onclick={shareOpen ? closeShare : handleShare}
+      onkeydown={handlePanelKey}
+    >
+      {shareBusy ? 'Saving…' : 'Share'}
+    </button>
+  </div>
+
+  {#if shareOpen}
+    <div
+      id="share-panel"
+      class="share-panel"
+      bind:this={panelEl}
+      tabindex="-1"
+      role="dialog"
+      aria-label="Share workspace"
+      onkeydown={handlePanelKey}
+    >
+      <label class="share-label" for="slug-field">Workspace link</label>
+      <div class="share-row">
+        <input
+          id="slug-field"
+          class="slug-field"
+          bind:this={slugInputEl}
+          type="text"
+          readonly
+          value={shareSlug ? shareLink : ''}
+          placeholder={shareBusy ? 'Saving…' : '/w/--------'}
+          aria-readonly="true"
+        />
+        <button class="copy-control" disabled={!shareSlug} onclick={handleCopy}>Copy</button>
+      </div>
+      <p class="status-note {shareTone}" aria-live="polite">
+        {#if shareBusy}Saving…{:else if shareNote}{shareNote}{:else if shareSlug}Ready — copy the link.{/if}
+      </p>
+    </div>
+  {/if}
+
+  {#if loadNote}
+    <p class="status-note danger load-note" aria-live="polite">{loadNote}</p>
+  {/if}
 
   <Canvas
     {points}
     {viewport}
     {grid}
     {hover}
+    {style}
     onViewport={handleViewport}
     onHover={handleHover}
     onLeave={() => (hover = null)}
@@ -105,6 +292,14 @@
   >
     <Tooltip {hover} />
   </Canvas>
+
+  <StyleControls
+    colorHex={style.color}
+    widthPx={style.widthPx}
+    visible={style.visible}
+    onStyle={handleStyle}
+    onVisibility={handleVisibility}
+  />
 
   <Sliders {params} onParam={handleParam} />
 
