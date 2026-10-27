@@ -16,6 +16,7 @@ pub struct Store {
 pub enum StoreError { 
 	Db(sqlx::Error),
 	Corrupt(serde_json::Error),
+	Migration(sqlx::migrate::MigrateError),
 }
 
 impl std::fmt::Display for StoreError {
@@ -23,11 +24,13 @@ impl std::fmt::Display for StoreError {
 		match self {
 			Self::Db(e) => write!(f, "db error, {e}"),
 			Self::Corrupt(e) => write!(f, "json error, {e}"),
+			Self::Migration(e) => write!(f, "migration error, {e}"),
 		}
 	}
 }
 
 impl std::error::Error for StoreError {}
+
 
 //automatically converts the error into the custom enum
 impl From<sqlx::Error> for StoreError {
@@ -36,10 +39,19 @@ impl From<sqlx::Error> for StoreError {
 	}
 }
 
+
 //automatically converts the error into the custom enum
 impl From<serde_json::Error> for StoreError {
 	fn from(e: serde_json::Error) -> Self {
 		Self::Corrupt(e)
+	}
+}
+
+
+//automatically converts the error into the custom enum
+impl From<sqlx::migrate::MigrateError> for StoreError {
+	fn from(e: sqlx::migrate::MigrateError) -> Self {
+		Self::Migration(e)
 	}
 }
 
@@ -57,13 +69,11 @@ impl Store {
 	}
 
 	//ensures that the table exists inside the db
-	pub async fn ensure_table(pool: &PgPool) -> Result<(), sqlx::Error> {
-		sqlx::query(
-			"CREATE TABLE IF NOT EXISTS workspaces (slug TEXT PRIMARY KEY, blob TEXT NOT NULL)",
-		)
-		.execute(pool)
-		.await
-		.map(|_| ())
+	pub async fn ensure_table(pool: &PgPool) -> Result<(), StoreError> {
+		sqlx::migrate!("./migrations")
+			.run(pool)
+			.await?;
+		Ok(())
 	}
 
 	//turns json into text and inserts it with a random slug

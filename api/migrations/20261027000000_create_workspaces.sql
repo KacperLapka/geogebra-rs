@@ -1,0 +1,4 @@
+CREATE TABLE IF NOT EXISTS workspaces (
+    slug TEXT PRIMARY KEY,
+    blob TEXT NOT NULL
+);

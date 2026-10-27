@@ -5,4 +5,8 @@ edition = "2024"
 
 [dependencies]
 axum = "0.8.9"
-sqlx = { version = "0.9.0", features = ["postgres"] }
+tokio = { version = "1.0", features = ["full"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+sqlx = { version = "0.8", features = ["postgres", "runtime-tokio", "tls-native-tls"] }
+rand = "0.8"
