@@ -13,7 +13,12 @@ host    all             postgres        127.0.0.1/32            trust
 host    all             postgres        ::1/128                 trust
 ```
 
+
+
 first run:
+(this is the localhost - temporary)
+>  psql postgres://postgres:password@localhost:5432/my_blob_store
+
 > sudo -i -u postgres psql
 
 then enter these one after another
