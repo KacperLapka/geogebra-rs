@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use wgpu::util::DeviceExt;
 use winit::{
     application::ApplicationHandler,
     event::*,
@@ -13,6 +14,48 @@ use wasm_bindgen::prelude::*;
 #[cfg(target_arch = "wasm32")]
 use winit::platform::web::EventLoopExtWebSys;
 
+use std::cell::RefCell;
+
+mod graph;
+pub mod wasm_interface;
+pub use wasm_interface::*;
+
+thread_local! {
+    pub static GRAPH_STATE: RefCell<GraphState> = RefCell::new(GraphState {
+        changed: false,
+        path: lyon_tessellation::path::Path::builder().build(),
+    });
+}
+
+#[repr(C)]
+#[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable)]
+struct Vertex {
+    position: [f32; 3],
+    color: [f32; 3],
+}
+
+// lib.rs
+impl Vertex {
+    fn desc() -> wgpu::VertexBufferLayout<'static> {
+        wgpu::VertexBufferLayout {
+            array_stride: std::mem::size_of::<Vertex>() as wgpu::BufferAddress,
+            step_mode: wgpu::VertexStepMode::Vertex,
+            attributes: &[
+                wgpu::VertexAttribute {
+                    offset: 0,
+                    shader_location: 0,
+                    format: wgpu::VertexFormat::Float32x3,
+                },
+                wgpu::VertexAttribute {
+                    offset: std::mem::size_of::<[f32; 3]>() as wgpu::BufferAddress,
+                    shader_location: 1,
+                    format: wgpu::VertexFormat::Float32x3,
+                },
+            ],
+        }
+    }
+}
+
 // This will store the state of our game
 pub struct State {
     surface: wgpu::Surface<'static>,
@@ -21,6 +64,13 @@ pub struct State {
     config: wgpu::SurfaceConfiguration,
     is_surface_configured: bool,
     window: Arc<Window>,
+    grid_pipeline: wgpu::RenderPipeline,
+    vertex_buffer: wgpu::Buffer,
+    grid_vertices: u32,
+    graph_pipeline: wgpu::RenderPipeline,
+    graph_vertex_buffer: wgpu::Buffer,
+    graph_index_buffer: wgpu::Buffer,
+    graph_index_count: u32,
 }
 
 impl State {
@@ -80,6 +130,7 @@ impl State {
             .find(|f| f.is_srgb())
             .copied()
             .unwrap_or(surface_caps.formats[0]);
+
         let config = wgpu::SurfaceConfiguration {
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
             format: surface_format,
@@ -91,6 +142,111 @@ impl State {
             desired_maximum_frame_latency: 2,
             color_space: wgpu::SurfaceColorSpace::Auto,
         };
+
+        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("Shader"),
+            source: wgpu::ShaderSource::Wgsl(include_str!("shader.wgsl").into()),
+        });
+
+        let render_pipeline_layout =
+            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("Render Pipeline Layout"),
+                bind_group_layouts: &[],
+                immediate_size: 0,
+            });
+
+        let mut pipeline_descriptor = wgpu::RenderPipelineDescriptor {
+            label: Some("Grid Pipeline"),
+            layout: Some(&render_pipeline_layout),
+            vertex: wgpu::VertexState {
+                module: &shader,
+                entry_point: Some("vs_main"),     // 1.
+                buffers: &[Some(Vertex::desc())], // 2.
+                compilation_options: wgpu::PipelineCompilationOptions::default(),
+            },
+            fragment: Some(wgpu::FragmentState {
+                // 3.
+                module: &shader,
+                entry_point: Some("fs_main"),
+                targets: &[Some(wgpu::ColorTargetState {
+                    // 4.
+                    format: config.format,
+                    blend: Some(wgpu::BlendState::REPLACE),
+                    write_mask: wgpu::ColorWrites::ALL,
+                })],
+                compilation_options: wgpu::PipelineCompilationOptions::default(),
+            }),
+            primitive: wgpu::PrimitiveState {
+                topology: wgpu::PrimitiveTopology::LineList, // 1.
+                strip_index_format: None,
+                front_face: wgpu::FrontFace::Ccw, // 2.
+                cull_mode: None,
+                //cull_mode: Some(wgpu::Face::Back),
+                // Setting this to anything other than Fill requires Features::NON_FILL_POLYGON_MODE
+                polygon_mode: wgpu::PolygonMode::Fill,
+                // Requires Features::DEPTH_CLIP_CONTROL
+                unclipped_depth: false,
+                // Requires Features::CONSERVATIVE_RASTERIZATION
+                conservative: false,
+            },
+            depth_stencil: None, // 1.
+            multisample: wgpu::MultisampleState {
+                count: 1,                         // 2.
+                mask: !0,                         // 3.
+                alpha_to_coverage_enabled: false, // 4.
+            },
+            multiview_mask: None, // 5.
+            cache: None,          // 6.
+        };
+        let grid_pipeline = device.create_render_pipeline(&pipeline_descriptor);
+        pipeline_descriptor.label = Some("Graph Pipeline");
+        pipeline_descriptor.primitive.topology = wgpu::PrimitiveTopology::TriangleList;
+        let graph_pipeline = device.create_render_pipeline(&pipeline_descriptor);
+
+        let mut grid_vertices = Vec::new();
+        for i in -10..=10 {
+            let offset = i as f32 * 0.1;
+            grid_vertices.push(Vertex {
+                position: [offset, -1.0, 0.0],
+                color: [0.5, 0.5, 0.5],
+            });
+            grid_vertices.push(Vertex {
+                position: [offset, 1.0, 0.0],
+                color: [0.5, 0.5, 0.5],
+            });
+            grid_vertices.push(Vertex {
+                position: [-1.0, offset, 0.0],
+                color: [0.5, 0.5, 0.5],
+            });
+
+            grid_vertices.push(Vertex {
+                position: [1.0, offset, 0.0],
+                color: [0.5, 0.5, 0.5],
+            });
+        }
+
+        let vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("Vertex Buffer"),
+            contents: bytemuck::cast_slice(&grid_vertices),
+            usage: wgpu::BufferUsages::VERTEX,
+        });
+
+        let func = graph::example();
+        let graph_vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("Graph Vertex Buffer"),
+            contents: bytemuck::cast_slice(&func.vertices),
+            usage: wgpu::BufferUsages::VERTEX,
+        });
+
+        // --- C. TWORZENIE BUFORA INDEKSÓW Z Vec<u16> ---
+        let graph_index_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("Graph Index Buffer"),
+            contents: bytemuck::cast_slice(&func.indices), // <-- ZMIENIASZ Vec<u16> NA BAJTE I PRZEKAZUJESZ
+            usage: wgpu::BufferUsages::INDEX,
+        });
+
+        let graph_index_count = func.indices.len() as u32;
+
         Ok(Self {
             surface,
             device,
@@ -98,6 +254,13 @@ impl State {
             config,
             is_surface_configured: false,
             window,
+            grid_pipeline,
+            vertex_buffer,
+            grid_vertices: grid_vertices.len() as u32,
+            graph_pipeline,
+            graph_index_buffer,
+            graph_vertex_buffer,
+            graph_index_count,
         })
     }
 
@@ -149,7 +312,7 @@ impl State {
                 label: Some("Render Encoder"),
             });
 
-        let _render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+        let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("Render Pass"),
             color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                 view: &view,
@@ -170,7 +333,17 @@ impl State {
             timestamp_writes: None,
             multiview_mask: None,
         });
-        drop(_render_pass);
+
+        render_pass.set_pipeline(&self.grid_pipeline);
+        render_pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
+        render_pass.draw(0..self.grid_vertices, 0..1);
+
+        render_pass.set_pipeline(&self.graph_pipeline);
+        render_pass.set_vertex_buffer(0, self.graph_vertex_buffer.slice(..));
+        render_pass.set_index_buffer(self.graph_index_buffer.slice(..), wgpu::IndexFormat::Uint16);
+        render_pass.draw_indexed(0..self.graph_index_count, 0, 0..1);
+
+        drop(render_pass);
 
         // submit will accept anything that implements IntoIter
         self.queue.submit(std::iter::once(encoder.finish()));
@@ -186,7 +359,27 @@ impl State {
         }
     }
 
-    fn update(&mut self) {}
+    fn update(&mut self) {
+        if GRAPH_STATE.with_borrow(|state| state.changed) {
+            let path = GRAPH_STATE.with_borrow(|state| state.path.clone());
+            let func = graph::path_to_vertex(path);
+            self.graph_vertex_buffer = self.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("Graph Vertex Buffer"),
+                contents: bytemuck::cast_slice(&func.vertices),
+                usage: wgpu::BufferUsages::VERTEX,
+            });
+            self.graph_index_buffer = self.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("Graph Index Buffer"),
+                contents: bytemuck::cast_slice(&func.indices),
+                usage: wgpu::BufferUsages::INDEX,
+            });
+            self.graph_index_count = func.indices.len() as u32;
+
+            crate::GRAPH_STATE.with_borrow_mut(|state| {
+                state.changed = false;
+            });
+        }
+    }
 }
 pub struct App {
     #[cfg(target_arch = "wasm32")]
@@ -284,7 +477,7 @@ impl ApplicationHandler<State> for App {
             WindowEvent::Resized(size) => state.resize(size.width, size.height),
             WindowEvent::RedrawRequested => {
                 state.update();
-                if let Err(e) = state.render()  {
+                if let Err(e) = state.render() {
                     log::error!("{e}");
                     event_loop.exit();
                 }
