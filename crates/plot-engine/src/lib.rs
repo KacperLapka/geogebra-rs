@@ -363,16 +363,20 @@ impl State {
         if GRAPH_STATE.with_borrow(|state| state.changed) {
             let path = GRAPH_STATE.with_borrow(|state| state.path.clone());
             let func = graph::path_to_vertex(path);
-            self.graph_vertex_buffer = self.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some("Graph Vertex Buffer"),
-                contents: bytemuck::cast_slice(&func.vertices),
-                usage: wgpu::BufferUsages::VERTEX,
-            });
-            self.graph_index_buffer = self.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some("Graph Index Buffer"),
-                contents: bytemuck::cast_slice(&func.indices),
-                usage: wgpu::BufferUsages::INDEX,
-            });
+            self.graph_vertex_buffer =
+                self.device
+                    .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                        label: Some("Graph Vertex Buffer"),
+                        contents: bytemuck::cast_slice(&func.vertices),
+                        usage: wgpu::BufferUsages::VERTEX,
+                    });
+            self.graph_index_buffer =
+                self.device
+                    .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                        label: Some("Graph Index Buffer"),
+                        contents: bytemuck::cast_slice(&func.indices),
+                        usage: wgpu::BufferUsages::INDEX,
+                    });
             self.graph_index_count = func.indices.len() as u32;
 
             crate::GRAPH_STATE.with_borrow_mut(|state| {
