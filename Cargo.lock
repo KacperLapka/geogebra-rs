@@ -1613,6 +1613,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "47e1ffaa40ddd1f3ed91f717a33c8c0ee23fff369e3aa8772b9605cc1d22f4c3"
 
 [[package]]
+name = "math-engine"
+version = "0.1.0"
+dependencies = [
+ "formulac",
+ "js-sys",
+ "num-complex",
+ "symb_anafis",
+ "wasm-bindgen",
+]
+
+[[package]]
 name = "md-5"
 version = "0.10.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3521,17 +3532,6 @@ name = "wasite"
 version = "0.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b8dad83b4f25e74f184f64c43b150b91efe7647395b42289f38e50566d82855b"
-
-[[package]]
-name = "wasm"
-version = "0.1.0"
-dependencies = [
- "formulac",
- "js-sys",
- "num-complex",
- "symb_anafis",
- "wasm-bindgen",
-]
 
 [[package]]
 name = "wasm-bindgen"
