@@ -1,0 +1,105 @@
+use formulac::Builder;
+use num_complex::Complex;
+use symb_anafis::diff;
+use wasm_bindgen::{JsValue, prelude::wasm_bindgen};
+
+#[wasm_bindgen]
+pub struct PointResult {
+    x: f64,
+    y: f64,
+}
+
+#[wasm_bindgen]
+impl PointResult {
+    #[wasm_bindgen(getter)]
+    pub fn x(&self) -> f64 {
+        self.x
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn y(&self) -> f64 {
+        self.y
+    }
+}
+
+pub fn compute_given_function(
+    expr_str: &str,
+    start: f64,
+    end: f64,
+) -> Result<Vec<(f64, f64)>, String> {
+    let builder = Builder::new(expr_str, ["x"]);
+    let func = builder.compile().expect("Failed to compile: {expr_str}");
+
+    let mut current = start;
+    let mut points = Vec::new();
+	let step: f64 = (end - start) / 1000.0;
+
+    while current <= end + 1e-9 {
+        let result = func([Complex::new(current, 0.0)]);
+        points.push((current, result.re));
+        current += step;
+    }
+
+    Ok(points)
+}
+
+#[wasm_bindgen]
+pub fn evaluate_function(
+    expr_str: &str,
+    start: f64,
+    end: f64,
+) -> Result<js_sys::Array, JsValue> {
+    let mut points = compute_given_function(expr_str, start, end)
+        .map_err(|err| JsValue::from_str(&err))?;
+
+    let js_array = js_sys::Array::new();
+	
+	let scale_mult_x: f64 = 2.0 / (end - start);
+	let scale_offset_x: f64 = -1.0 - (scale_mult_x * start);
+	
+	let mut min_y = points[0].1;
+	let mut max_y = min_y;
+
+	for (x,y) in points.iter().copied() {
+		if y < min_y {
+			min_y = y;
+		} else if y > max_y {
+			max_y = y;
+		}
+	}
+
+	let y_range = max_y - min_y;
+    let (scale_mult_y, scale_offset_y) = if y_range.abs() < f64::EPSILON {
+        (0.0, 0.0)
+    } else {
+        let mult = 2.0 / y_range;
+        (mult, -1.0 - (mult * min_y))
+    };
+
+    for (x, y) in points.iter().copied() {
+		let scaled_x = (x * scale_mult_x) + scale_offset_x;
+        
+        let scaled_y = if y_range.abs() < f64::EPSILON {
+            0.0
+        } else {
+            (y * scale_mult_y) + scale_offset_y
+        };
+
+        let pt = PointResult { 
+            x: scaled_x, 
+            y: scaled_y 
+        };
+        let js_val = JsValue::from(pt);
+        js_array.push(&js_val);
+    }
+
+    Ok(js_array)
+}
+
+#[wasm_bindgen]
+pub fn compute_derivative(expr_str: &str) -> Result<String, JsValue> {
+    let derivative = diff(expr_str.to_string(), "x".to_string(), Some(&[]), None)
+        .map_err(|err| JsValue::from_str(&format!("Derivation error: {:?}", err)))?;
+
+    Ok(derivative)
+}
