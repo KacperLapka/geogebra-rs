@@ -26,3 +26,14 @@ ADR: Wybór stosu technologicznego (Rust + WebGPU) do renderowania wykresów na 
 | Konsekwencje i Korzyści | • Wydajność: Przerzucenie ciężaru rysowania wykresów na procesor graficzny (GPU) klienta gwarantuje maksymalną wydajność i brak zacięć interfejsu (UI).
 • Spójność bazy kodu: Utrzymanie obu silników w Rust ułatwia zarządzanie kodem i ujednolica proces budowania (narzędzie wasm-pack).
 • Ograniczenia: WebGPU to nowoczesny standard, co oznacza brak wsparcia w starszych lub nieaktualizowanych przeglądarkach. |
+
+# ADR: Rozdzielenie math-engine / plot-engine oraz teselacja wykresu przez lyon
+
+| Sekcja | Decyzja |
+|---|---|
+| Status | Przyjęta / Wdrożona |
+| Kontekst | Jeden moduł WASM łączący parsowanie, różniczkowanie i `wgpu`/`winit` byłby trudny w utrzymaniu i łamałby wymóg niezależnej kompilacji silnika matematycznego (`NFR-MAIN-01`). Rysowanie polilinii wymaga też zamiany cienkiej linii na geometrię widoczną na GPU — `wgpu` na WebGL nie ma grubych linii. |
+| Decyzja | Dwa osobne crate'y i dwa osobne moduły WASM: `crates/math-engine` (czysta matematyka: `formulac::Builder`, `symb_anafis::diff`, `PointResult`, `compute_given_function` / `evaluate_function` / `compute_derivative` w `crates/math-engine/src/lib.rs:25-101`) oraz `crates/plot-engine` (czysty rendering: `winit` + `wgpu` + `lyon_tessellation`, `GRAPH_STATE{changed,path}`, `update_graph(points:&[f32])` w `crates/plot-engine/src/wasm_interface.rs:12`, teselacja w `crates/plot-engine/src/graph.rs:31-51`). Łącznik to JS w `frontend/src/routes/+page.svelte:55-65`: `evaluate_function(...)` → `Float32Array(1000)` samych `y` → `updateGraph(...)`. Granica: znormalizowane `[-1,1]`, dokładnie 1000 próbek. |
+| Użycie lyon | `points_raw_to_path` (`graph.rs:15`) buduje `lyon::path::Path` (`begin` + `line_to`, `STEP=2.0/1000`), `path_to_vertex` (`graph.rs:31`) robi `StrokeTessellator::tessellate_path` z `StrokeOptions::with_line_width(0.008)` do `VertexBuffers<MyVertex,u16>` rysowanych jako `TriangleList` (`lib.rs:203`). Siatka to osobny pipeline `LineList`, wykres to teselowany trójkątny pasek w kolorze `[1,0,0]`. |
+| Odrzucone alternatywy | Monolit jeden crate / jeden WASM — odrzucony: miesza zależności numeryczne z GPU, uniemożliwia testowanie matematyki bez przeglądarki. Bezpośredni `LineList` 1px bez lyon — odrzucony: cienka linia, brak kontroli grubości i łączeń na WebGL. Własna teselacja — odrzucona: koszt utrzymania vs gotowy `lyon`. |
+| Konsekwencje | Pozytywy: niezależna kompilacja i rozwój, czytelny kontrakt przez JS, stała grubość linii niezależna od backendu GPU. Koszty: podwójny cold-start WASM, kopia `1000×f32` przez JS przy każdej aktualizacji, sztywne `1000` / `0.008` / kolor w kodzie, realokacja VBO/IBO w `State::update` (`lib.rs:362`) przy każdym `changed=true`. |
