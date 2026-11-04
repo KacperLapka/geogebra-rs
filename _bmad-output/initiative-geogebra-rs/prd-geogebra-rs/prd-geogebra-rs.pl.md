@@ -52,14 +52,14 @@ Dostępne na rynku programy do algebry komputerowej i rysowania wykresów (np. G
 
 Poniższe 5 kluczowych historyjek spełnia reguły **INVEST** (Niezależne, Negocjowalne, Wartościowe, Szacowalne, Małe, Testowalne) i definiuje bazowy zakres projektu:
 
-### Historyjka 1: Rysowanie Wykresu i Płynna Nawigacja Widokiem
+### Historyjka 1: Rysowanie Wykresu i wprowadzanie danych
 > **Jako** student lub wykładowca,  
-> **Chcę** wprowadzić wzór funkcji analitycznej oraz płynnie przesuwać i przybliżać układ współrzędnych,  
-> **Aby** intuicyjnie zbadać lokalne i globalne zachowanie funkcji.
+> **Chcę** wprowadzić wzór funkcji analitycznej oraz dynamicznie przeliczyć wzór pochodnej,  
+> **Aby** intuicyjnie zbadać lokalne i globalne zachowanie funkcji i ją wyświetlić na wykresie.
 * **Kryteria Akceptacji (GIVEN-WHEN-THEN / DANE-GDY-WTEDY):**
   - **Mając (Given)** aktywną sesję GeoGebra RS,
   - **Gdy (When)** użytkownik wpisze w polu formuły `f(x) = x^3 - 3*x + 1` i zatwierdzi klawiszem Enter,
-  - **Wtedy (Then)** płótno `wgpu` wyrenderuje ciągłą krzywą w bieżącym obszarze widocznym w czasie $< 16\text{ ms}$ ($< 1$ klatki), dynamicznie dostosowując gęstość podziałki siatki i etykiety osi podczas przewijania kółkiem myszy (zoom) oraz przeciągania kursorem (pan).
+  - **Wtedy (Then)** płótno `wgpu` wyrenderuje ciągłą krzywą w bieżącym obszarze widocznym w czasie $< 16\text{ ms}$ ($< 1$ klatki)
 
 ### Historyjka 2: Obliczanie Pierwszej i Drugiej Pochodnej oraz Badanie Stycznej
 > **Jako** student analizy matematycznej,  
