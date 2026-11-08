@@ -2,6 +2,6 @@
 resolver = "3"
 members = [
   "crates/api",
-  "crates/math-engine",
-  "crates/plot-engine",
+  "crates/math_engine",
+  "crates/plot_engine",
 ]
