@@ -67,14 +67,17 @@ impl Mathematician {
 			.map_err(|err| JsValue::from_str(&err))?; 
 		self.points_normalised_function = scale_points(&points, start, end);
 
-		let raw_der = compute_given_function(&self.derivative, start, end)
-                .map_err(|err| JsValue::from_str(&err))?;
-            self.points_normalised_derivative = scale_points(&raw_der, start, end);
+		if !self.derivative.is_empty() {
+			if let Ok(raw_der) = compute_given_function(&self.derivative, start, end) {
+				self.points_normalised_derivative = scale_points(&raw_der, start, end);
+			}
+		}
 
-		let raw_sec = compute_given_function(&self.second_derivative, start, end)
-                .map_err(|err| JsValue::from_str(&err))?;
-            self.points_normalised_second_derivative = scale_points(&raw_sec, start, end);
-
+		if !self.second_derivative.is_empty() {
+			if let Ok(raw_sec) = compute_given_function(&self.second_derivative, start, end) {
+				self.points_normalised_second_derivative = scale_points(&raw_sec, start, end);
+			}
+		}
 
 		Ok(())
 	}

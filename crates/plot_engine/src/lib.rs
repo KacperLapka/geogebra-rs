@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use math_engine::Mathematician;
 use wgpu::util::DeviceExt;
 use winit::{
     application::ApplicationHandler,
@@ -23,7 +24,7 @@ pub use wasm_interface::*;
 thread_local! {
     pub static GRAPH_STATE: RefCell<GraphState> = RefCell::new(GraphState {
         changed: false,
-        path: lyon_tessellation::path::Path::builder().build(),
+        function: Mathematician::new("".to_owned()),
     });
 }
 
@@ -58,6 +59,9 @@ impl Vertex {
 
 // This will store the state of our game
 pub struct State {
+    is_dragging: bool,
+    offset: (f64, f64),
+
     surface: wgpu::Surface<'static>,
     device: wgpu::Device,
     queue: wgpu::Queue,
@@ -248,6 +252,8 @@ impl State {
         let graph_index_count = func.indices.len() as u32;
 
         Ok(Self {
+            is_dragging: false,
+            offset: (0.0, 0.0),
             surface,
             device,
             queue,
@@ -361,8 +367,9 @@ impl State {
 
     fn update(&mut self) {
         if GRAPH_STATE.with_borrow(|state| state.changed) {
-            let path = GRAPH_STATE.with_borrow(|state| state.path.clone());
-            let func = graph::path_to_vertex(path);
+            let points = GRAPH_STATE.with_borrow(|state| state.function.points_normalised_function()).into_iter().map(|p| p.y() as f32).collect::<Vec<f32>>();
+            let function = graph::points_raw_to_path(&points);
+            let func = graph::path_to_vertex(function);
             self.graph_vertex_buffer =
                 self.device
                     .create_buffer_init(&wgpu::util::BufferInitDescriptor {
@@ -471,17 +478,17 @@ impl ApplicationHandler<State> for App {
         _window_id: winit::window::WindowId,
         event: WindowEvent,
     ) {
-        let state = match &mut self.state {
+        let window_state = match &mut self.state {
             Some(canvas) => canvas,
             None => return,
         };
 
         match event {
             WindowEvent::CloseRequested => event_loop.exit(),
-            WindowEvent::Resized(size) => state.resize(size.width, size.height),
+            WindowEvent::Resized(size) => window_state.resize(size.width, size.height),
             WindowEvent::RedrawRequested => {
-                state.update();
-                if let Err(e) = state.render() {
+                window_state.update();
+                if let Err(e) = window_state.render() {
                     log::error!("{e}");
                     event_loop.exit();
                 }
@@ -494,7 +501,13 @@ impl ApplicationHandler<State> for App {
                         ..
                     },
                 ..
-            } => state.handle_key(event_loop, code, key_state.is_pressed()),
+            } => window_state.handle_key(event_loop, code, key_state.is_pressed()),
+            WindowEvent::MouseInput { state, button , .. } => {
+                if button == MouseButton::Left {
+                    window_state.is_dragging = state.is_pressed();
+                }
+            },
+            WindowEvent::CursorMoved { position, .. } => {},
             _ => {}
         }
     }

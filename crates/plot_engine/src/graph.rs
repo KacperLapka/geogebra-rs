@@ -12,7 +12,7 @@ pub struct MyVertex {
     pub color: [f32; 3],
 }
 
-pub fn points_raw_to_path(points: &[f32; PROBING_SIZE]) -> Path {
+pub fn points_raw_to_path(points: &Vec<f32>) -> Path {
     let mut builder = Path::builder();
 
     let mut points_iter = points.iter().enumerate();
@@ -27,6 +27,14 @@ pub fn points_raw_to_path(points: &[f32; PROBING_SIZE]) -> Path {
     builder.end(false);
     builder.build()
 }
+
+//pub fn str_to_path(function: &str, offset: (f64, f64)) -> Result<Path, String> {
+//    let points = math_engine::compute_given_function(function, 0.0, 0.0)?.into_iter().map(|f| f.1).collect();
+//    if points.len() != 1000 {
+//        return Err("dsds".to_owned());
+//    }
+//    Ok(points_raw_to_path(&points))
+//}
 
 pub fn path_to_vertex(path: Path) -> VertexBuffers<MyVertex, u16> {
     let mut geometry: VertexBuffers<MyVertex, u16> = VertexBuffers::new();
