@@ -10,3 +10,4 @@ serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 sqlx = { version = "0.8", features = ["postgres", "runtime-tokio", "tls-native-tls"] }
 rand = "0.8"
+dotenvy = "0.15.7"

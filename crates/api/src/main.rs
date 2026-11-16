@@ -5,13 +5,13 @@ use axum::{Router, routing::get};
 use std::sync::Arc;
 use tokio::net::TcpListener;
 
-//local fallback connection
-const DEFAULT_DATABASE_URL: &str = "postgres://postgres:password@localhost:5432/my_blob_store";
-
 #[tokio::main]
 async fn main() {
+    // load environment variables from .env file
+    let _ = dotenvy::dotenv();
+
     //read url from env or use the fallback
-    let db_url = std::env::var("DATABASE_URL").unwrap_or_else(|_| DEFAULT_DATABASE_URL.to_string());
+    let db_url = std::env::var("DATABASE_URL").expect("failed to get DATABASE_URL");
 
     println!("Connecting to database...");
 
