@@ -33,6 +33,7 @@ pub struct Mathematician {
     second_derivative: String,
 	start: Option<f64>,
 	end: Option<f64>,
+	y_offset: f64,
 }
 
 #[wasm_bindgen]
@@ -48,6 +49,7 @@ impl Mathematician {
             second_derivative: String::new(),
 			start: None,
 			end: None,
+			y_offset: 0.0,
         }
     }
 
@@ -65,24 +67,59 @@ impl Mathematician {
 
 		let points = compute_given_function(&self.function, start, end)
 			.map_err(|err| JsValue::from_str(&err))?; 
-		self.points_normalised_function = scale_points(&points, start, end);
+		self.points_normalised_function = scale_points(&points, start, end, self.y_offset);
 
-		if !self.derivative.is_empty() {
-			if let Ok(raw_der) = compute_given_function(&self.derivative, start, end) {
-				self.points_normalised_derivative = scale_points(&raw_der, start, end);
-			}
-		}
+		let raw_der = compute_given_function(&self.derivative, start, end)
+                .map_err(|err| JsValue::from_str(&err))?;
+		self.points_normalised_derivative = scale_points(&raw_der, start, end, self.y_offset);
 
-		if !self.second_derivative.is_empty() {
-			if let Ok(raw_sec) = compute_given_function(&self.second_derivative, start, end) {
-				self.points_normalised_second_derivative = scale_points(&raw_sec, start, end);
-			}
-		}
+		let raw_sec = compute_given_function(&self.second_derivative, start, end)
+                .map_err(|err| JsValue::from_str(&err))?;
+		self.points_normalised_second_derivative = scale_points(&raw_sec, start, end, self.y_offset);
+
 
 		Ok(())
 	}
 
+	pub fn add_offset(&mut self, x_shift: f64, y_shift: f64) -> Result<(), JsValue> {
 
+		if let Some(s) = self.start.as_mut() {
+            *s += x_shift;
+        } else {
+            return Err(JsValue::from_str("Start range not set!"));
+        }
+
+		if let Some(e) = self.end.as_mut() {
+            *e += x_shift;
+        } else {
+            return Err(JsValue::from_str("End ranges not set!"));
+        }
+
+		self.y_offset += y_shift;
+		self.calc_derivatives()?;
+		self.to_points()?;
+		Ok(())
+	}
+	
+	
+	pub fn zoom(&mut self, factor: f64) -> Result<(), JsValue> {
+        let start = self.start.ok_or_else(|| JsValue::from_str("Start range not set!"))?;
+        let end = self.end.ok_or_else(|| JsValue::from_str("End range not set!"))?;
+
+        let center = (start + end) / 2.0;
+        let half_width = (end - start) * factor / 2.0;
+
+        self.start = Some(center - half_width);
+        self.end = Some(center + half_width);
+
+        self.calc_derivatives()?;
+        self.to_points()?;
+        Ok(())
+    }
+
+
+	//======================================
+	//getters and setters
 	#[wasm_bindgen(getter)]
     pub fn function(&self) -> String {
         self.function.clone()
@@ -156,7 +193,7 @@ pub fn compute_given_function(
     Ok(points)
 }
 
-pub fn scale_points(points: &Vec<(f64, f64)>, start: f64, end: f64) -> Vec<PointResult> {
+pub fn scale_points(points: &Vec<(f64, f64)>, start: f64, end: f64, y_offset: f64) -> Vec<PointResult> {
     if points.is_empty() {
         return Vec::new();
     }
@@ -164,34 +201,43 @@ pub fn scale_points(points: &Vec<(f64, f64)>, start: f64, end: f64) -> Vec<Point
     let scale_mult_x: f64 = 2.0 / (end - start);
     let scale_offset_x: f64 = -1.0 - (scale_mult_x * start);
 
-    let mut min_y = points[0].1;
-    let mut max_y = min_y;
 
-    for &(_x, y) in points {
-        if y < min_y {
-            min_y = y;
-        } else if y > max_y {
-            max_y = y;
-        }
-    }
 
-    let y_range = max_y - min_y;
-    let (scale_mult_y, scale_offset_y) = if y_range.abs() < f64::EPSILON {
-        (0.0, 0.0)
-    } else {
-        let mult = 2.0 / y_range;
-        (mult, -1.0 - (mult * min_y))
-    };
+    // let mut min_y = points[0].1;
+    // let mut max_y = min_y;
+
+    // for &(_x, y) in points {
+        // if y < min_y {
+            // min_y = y;
+        // } else if y > max_y {
+            // max_y = y;
+        // }
+    // }
+    // let y_range = max_y - min_y;
+
+    // let (scale_mult_y, scale_offset_y) = if y_range.abs() < f64::EPSILON {
+        // (0.0, 0.0)
+    // } else {
+        // let mult = 2.0 / y_range;
+        // (mult, -1.0 - (mult * min_y))
+    // };
+
+	let min_y = -10.0;
+	let max_y = 10.0;
+	let y_range = max_y - min_y;
+	let mult = 2.0 / y_range;
+	let scale_offset_y = -1.0 - (mult * min_y);
 
     points
         .iter()
         .map(|&(x, y)| {
             let scaled_x = (x * scale_mult_x) + scale_offset_x;
-            let scaled_y = if y_range.abs() < f64::EPSILON {
-                0.0
-            } else {
-                (y * scale_mult_y) + scale_offset_y
-            };
+            // let scaled_y = if y_range.abs() < f64::EPSILON {
+                // 0.0 + y_offset
+            // } else {
+                // (y * scale_mult_y) + scale_offset_y + y_offset
+            // };
+			let scaled_y = (y*mult) + scale_offset_y + y_offset;
 
             PointResult {
                 x: scaled_x,
@@ -211,10 +257,10 @@ pub fn points_to_js_array(points: Vec<PointResult>) -> js_sys::Array {
 }
 
 #[wasm_bindgen]
-pub fn evaluate_function(expr_str: &str, start: f64, end: f64) -> Result<js_sys::Array, JsValue> {
+pub fn evaluate_function(expr_str: &str, start: f64, end: f64, y_offset: f64) -> Result<js_sys::Array, JsValue> {
     let points =
         compute_given_function(expr_str, start, end).map_err(|err| JsValue::from_str(&err))?;
-    let scaled_points = scale_points(&points, start, end);
+    let scaled_points = scale_points(&points, start, end, y_offset);
     let js_array = points_to_js_array(scaled_points);
 
     Ok(js_array)
@@ -226,3 +272,4 @@ pub fn compute_derivative(expr_str: &str) -> Result<String, JsValue> {
 
     Ok(derivative)
 }
+
