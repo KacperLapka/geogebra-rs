@@ -273,3 +273,68 @@ pub fn compute_derivative(expr_str: &str) -> Result<String, JsValue> {
     Ok(derivative)
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn add_offset_changes_points_and_range() {
+        let mut mathematician = Mathematician::new("x^2".to_string());
+        mathematician.set_start(-10.0);
+        mathematician.set_end(10.0);
+
+        mathematician.calc_derivatives().unwrap();
+        mathematician.to_points().unwrap();
+
+        let before_points = mathematician.points_normalised_function();
+        let before_start = mathematician.start;
+        let before_end = mathematician.end;
+        let before_y_offset = mathematician.y_offset;
+
+        mathematician.add_offset(2.0, 1.5).unwrap();
+
+        let after_points = mathematician.points_normalised_function();
+
+        assert_ne!(before_y_offset, mathematician.y_offset);
+        assert_ne!(before_start, mathematician.start);
+        assert_ne!(before_end, mathematician.end);
+
+        let x_before = before_points.first().map(|p| p.x()).unwrap_or_default();
+        let y_before = before_points.first().map(|p| p.y()).unwrap_or_default();
+        let x_after = after_points.first().map(|p| p.x()).unwrap_or_default();
+        let y_after = after_points.first().map(|p| p.y()).unwrap_or_default();
+
+        assert_ne!(x_before, x_after);
+        assert_ne!(y_before, y_after);
+    }
+
+    #[test]
+    fn zoom_changes_points_and_range() {
+        let mut mathematician = Mathematician::new("x^2".to_string());
+        mathematician.set_start(-10.0);
+        mathematician.set_end(10.0);
+
+        mathematician.calc_derivatives().unwrap();
+        mathematician.to_points().unwrap();
+
+        let before_points = mathematician.points_normalised_function();
+        let before_start = mathematician.start;
+        let before_end = mathematician.end;
+
+        mathematician.zoom(0.5).unwrap();
+
+        let after_points = mathematician.points_normalised_function();
+
+        assert_ne!(before_start, mathematician.start);
+        assert_ne!(before_end, mathematician.end);
+
+        let x_before = before_points.first().map(|p| p.x()).unwrap_or_default();
+        let y_before = before_points.first().map(|p| p.y()).unwrap_or_default();
+        let x_after = after_points.first().map(|p| p.x()).unwrap_or_default();
+        let y_after = after_points.first().map(|p| p.y()).unwrap_or_default();
+
+        assert_ne!(x_before, x_after);
+        assert_ne!(y_before, y_after);
+    }
+}
+
