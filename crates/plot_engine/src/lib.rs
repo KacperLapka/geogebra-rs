@@ -242,10 +242,9 @@ impl State {
             usage: wgpu::BufferUsages::VERTEX,
         });
 
-        // --- C. TWORZENIE BUFORA INDEKSÓW Z Vec<u16> ---
         let graph_index_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("Graph Index Buffer"),
-            contents: bytemuck::cast_slice(&func.indices), // <-- ZMIENIASZ Vec<u16> NA BAJTE I PRZEKAZUJESZ
+            contents: bytemuck::cast_slice(&func.indices),
             usage: wgpu::BufferUsages::INDEX,
         });
 
@@ -283,7 +282,6 @@ impl State {
     fn render(&mut self) -> anyhow::Result<()> {
         self.window.request_redraw();
 
-        // We can't render unless the surface is configured
         if !self.is_surface_configured {
             return Ok(());
         }

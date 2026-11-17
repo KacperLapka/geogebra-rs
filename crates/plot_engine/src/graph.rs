@@ -93,3 +93,4 @@ pub fn example() -> VertexBuffers<MyVertex, u16> {
     // The tessellated geometry is ready to be uploaded to the GPU.
     return geometry;
 }
+
