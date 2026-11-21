@@ -181,6 +181,8 @@ impl Mathematician {
         self.roots.clear();
         self.criticals.clear();
         self.inflections.clear();
+		
+		let tolerance = 0.0001;
 
         let pts_f = &self.points_normalised_function;
         let pts_c = &self.points_normalised_derivative;
@@ -191,15 +193,15 @@ impl Mathematician {
             let p1_c = &pts_c[i];
             let p1_i = &pts_i[i];
 
-            if p1_f.y.abs() < f64::EPSILON {
+            if p1_f.y.abs() < tolerance {
                 self.roots.push(p1_f.x);
             }
 
-            if p1_c.y.abs() < f64::EPSILON {
+            if p1_c.y.abs() < tolerance {
                 self.criticals.push(p1_c.x);
             }
 
-            if p1_i.y.abs() < f64::EPSILON {
+            if p1_i.y.abs() < tolerance {
                 self.inflections.push(p1_i.x);
             }
         }
