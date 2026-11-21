@@ -4,17 +4,18 @@
 //! Function replacements are applied to a candidate first and committed only on
 //! success, so a failed expression can never replace the last valid curve.
 
-use std::cell::RefCell;
-
 use math_engine::Mathematician;
 use wasm_bindgen::JsValue;
 
+use crate::error::PlotError;
+
 /// The function currently displayed and whether it needs re-uploading.
 pub struct GraphState {
-    changed: bool,
+    pub changed: bool,
     function: Mathematician,
 }
 
+#[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
 impl GraphState {
     /// Creates an empty graph with nothing pending.
     pub fn new() -> Self {
@@ -22,16 +23,6 @@ impl GraphState {
             changed: false,
             function: Mathematician::new(String::new()),
         }
-    }
-
-    /// Returns whether the renderer should rebuild the curve buffers.
-    pub fn has_changed(&self) -> bool {
-        self.changed
-    }
-
-    /// Marks the pending change as rendered.
-    pub fn clear_changed(&mut self) {
-        self.changed = false;
     }
 
     /// Returns the y coordinates of the active curve in clip space.
@@ -49,22 +40,17 @@ impl GraphState {
         function: &str,
         start: f64,
         end: f64,
-    ) -> Result<(), JsValue> {
+    ) -> Result<(), PlotError> {
         if function.trim().is_empty() {
-            return Err(js_error("Function expression is empty"));
+            return Err(PlotError::EmptyFunction);
         }
         if !start.is_finite() || !end.is_finite() || start >= end {
-            return Err(js_error(
-                "Range must be finite and start must be less than end",
-            ));
+            return Err(PlotError::InvalidRange);
         }
 
         self.replace_function_with(|| {
             let mut candidate = Mathematician::new(function.to_owned());
-            candidate.set_start(start);
-            candidate.set_end(end);
-            candidate.calc_derivatives()?;
-            candidate.to_points()?;
+            candidate.to_points().map_err(math_error)?;
             Ok(candidate)
         })
     }
@@ -75,8 +61,8 @@ impl GraphState {
     /// production updates enter through `replace_function`.
     fn replace_function_with(
         &mut self,
-        build: impl FnOnce() -> Result<Mathematician, JsValue>,
-    ) -> Result<(), JsValue> {
+        build: impl FnOnce() -> Result<Mathematician, PlotError>,
+    ) -> Result<(), PlotError> {
         let candidate = build()?;
 
         self.function = candidate;
@@ -94,8 +80,14 @@ impl GraphState {
     ///
     /// The dirty flag is only set on success, so the last rendered curve stays
     /// visible when the operation fails.
-    pub fn add_offset(&mut self, x_shift: f64, y_shift: f64) -> Result<(), JsValue> {
-        self.function.add_offset(x_shift, y_shift)?;
+    pub fn add_offset(&mut self, x_shift: f64, y_shift: f64) -> Result<(), PlotError> {
+        if self.function.function().is_empty() {
+            return Err(PlotError::NoFunctionLoaded);
+        }
+
+        self.function
+            .add_offset(x_shift, y_shift)
+            .map_err(math_error)?;
         self.changed = true;
         Ok(())
     }
@@ -104,12 +96,15 @@ impl GraphState {
     ///
     /// The dirty flag is only set on success, so the last rendered curve stays
     /// visible when the operation fails.
-    pub fn zoom(&mut self, factor: f64) -> Result<(), JsValue> {
+    pub fn zoom(&mut self, factor: f64) -> Result<(), PlotError> {
         if !factor.is_finite() || factor <= 0.0 {
-            return Err(js_error("Zoom factor must be finite and greater than zero"));
+            return Err(PlotError::InvalidZoom);
+        }
+        if self.function.function().is_empty() {
+            return Err(PlotError::NoFunctionLoaded);
         }
 
-        self.function.zoom(factor)?;
+        self.function.zoom(factor).map_err(math_error)?;
         self.changed = true;
         Ok(())
     }
@@ -121,42 +116,22 @@ impl Default for GraphState {
     }
 }
 
-/// Builds an error for the JS boundary.
-///
-/// Host builds cannot construct JS strings, so tests only need a placeholder.
-#[cfg(target_arch = "wasm32")]
-fn js_error(message: &str) -> JsValue {
-    JsValue::from_str(message)
-}
+/// Captures the message from a `math_engine` error at the domain boundary.
+fn math_error(error: JsValue) -> PlotError {
+    #[cfg(target_arch = "wasm32")]
+    {
+        PlotError::Math(
+            error
+                .as_string()
+                .unwrap_or_else(|| "unknown math engine error".to_owned()),
+        )
+    }
 
-#[cfg(not(target_arch = "wasm32"))]
-fn js_error(_message: &str) -> JsValue {
-    JsValue::NULL
-}
-
-thread_local! {
-    /// Per-thread state shared by the WASM exports and the renderer.
-    pub static GRAPH_STATE: RefCell<GraphState> = RefCell::new(GraphState::new());
-}
-
-/// Updates the graph using the default `[-10, 10]` x range.
-pub fn update_graph(function: &str) -> Result<(), JsValue> {
-    update_graph_with_range(function, -10.0, 10.0)
-}
-
-/// Replaces the graph with a validated function over `[start, end]`.
-pub fn update_graph_with_range(function: &str, start: f64, end: f64) -> Result<(), JsValue> {
-    GRAPH_STATE.with_borrow_mut(|state| state.replace_function(function, start, end))
-}
-
-/// Pans and shifts the active graph.
-pub fn add_offset(x_shift: f32, y_shift: f32) -> Result<(), JsValue> {
-    GRAPH_STATE.with_borrow_mut(|state| state.add_offset(x_shift.into(), y_shift.into()))
-}
-
-/// Scales the visible x range of the active graph.
-pub fn zoom(factor: f32) -> Result<(), JsValue> {
-    GRAPH_STATE.with_borrow_mut(|state| state.zoom(factor.into()))
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let _ = error;
+        PlotError::Math("math engine error".to_owned())
+    }
 }
 
 #[cfg(test)]
@@ -168,7 +143,7 @@ mod tests {
     fn new_state_has_no_pending_change_or_points() {
         let state = GraphState::new();
 
-        assert!(!state.has_changed());
+        assert!(!state.changed);
         assert!(state.curve_points().is_empty());
     }
 
@@ -176,7 +151,7 @@ mod tests {
     fn invalid_input_keeps_previous_state() {
         let mut state = GraphState::new();
         state.replace_function("x^2", -10.0, 10.0).unwrap();
-        state.clear_changed();
+        state.changed = false;
 
         let previous_function = state.function_name();
         let previous_points = state.curve_points();
@@ -185,9 +160,12 @@ mod tests {
         // last valid curve. Unparseable expressions such as `"sin("` exercise
         // the same atomic path but cannot run on host because `math_engine`
         // builds a `JsValue` for its error; the WASM browser probe covers it.
-        assert!(state.replace_function("   ", -5.0, 5.0).is_err());
+        assert_eq!(
+            state.replace_function("   ", -5.0, 5.0),
+            Err(PlotError::EmptyFunction)
+        );
 
-        assert!(!state.has_changed());
+        assert!(!state.changed);
         assert_eq!(state.function_name(), previous_function);
         assert_eq!(state.curve_points(), previous_points);
     }
@@ -196,14 +174,18 @@ mod tests {
     fn failed_candidate_keeps_previous_state() {
         let mut state = GraphState::new();
         state.replace_function("x^2", -10.0, 10.0).unwrap();
-        state.clear_changed();
+        state.changed = false;
 
         let previous_function = state.function_name();
         let previous_points = state.curve_points();
 
-        assert!(state.replace_function_with(|| Err(JsValue::NULL)).is_err());
+        assert!(
+            state
+                .replace_function_with(|| Err(PlotError::Math("injected".to_owned())))
+                .is_err()
+        );
 
-        assert!(!state.has_changed());
+        assert!(!state.changed);
         assert_eq!(state.function_name(), previous_function);
         assert_eq!(state.curve_points(), previous_points);
     }
@@ -211,21 +193,21 @@ mod tests {
     #[test]
     fn replace_function_tracks_pending_changes() {
         let mut state = GraphState::new();
-        assert!(!state.has_changed());
+        assert!(!state.changed);
 
         state.replace_function("x^2", -10.0, 10.0).unwrap();
-        assert!(state.has_changed());
+        assert!(state.changed);
         assert_eq!(state.curve_points().len(), CURVE_SAMPLE_COUNT);
 
-        state.clear_changed();
-        assert!(!state.has_changed());
+        state.changed = false;
+        assert!(!state.changed);
     }
 
     #[test]
     fn invalid_ranges_are_rejected_without_changing_state() {
         let mut state = GraphState::new();
         state.replace_function("x^2", -10.0, 10.0).unwrap();
-        state.clear_changed();
+        state.changed = false;
 
         let previous_function = state.function_name();
         let previous_points = state.curve_points();
@@ -236,8 +218,11 @@ mod tests {
             (10.0, -10.0),
             (0.0, 0.0),
         ] {
-            assert!(state.replace_function("x^2", start, end).is_err());
-            assert!(!state.has_changed());
+            assert_eq!(
+                state.replace_function("x^2", start, end),
+                Err(PlotError::InvalidRange)
+            );
+            assert!(!state.changed);
             assert_eq!(state.function_name(), previous_function);
             assert_eq!(state.curve_points(), previous_points);
         }
@@ -247,32 +232,41 @@ mod tests {
     fn invalid_zoom_is_rejected_without_changing_state() {
         let mut state = GraphState::new();
         state.replace_function("x^2", -10.0, 10.0).unwrap();
-        state.clear_changed();
+        state.changed = false;
 
         let previous_points = state.curve_points();
 
         for factor in [0.0, -0.5, f64::NAN, f64::INFINITY] {
-            assert!(state.zoom(factor).is_err());
-            assert!(!state.has_changed());
+            assert_eq!(state.zoom(factor), Err(PlotError::InvalidZoom));
+            assert!(!state.changed);
             assert_eq!(state.curve_points(), previous_points);
         }
     }
 
     #[test]
-    fn offset_and_zoom_change_points_and_mark_changed() {
-        update_graph_with_range("x^2", -10.0, 10.0).unwrap();
-        GRAPH_STATE.with_borrow_mut(GraphState::clear_changed);
+    fn offset_and_zoom_require_a_loaded_function() {
+        let mut state = GraphState::new();
 
-        let before_offset = GRAPH_STATE.with_borrow(GraphState::curve_points);
-        add_offset(1.0, 0.5).unwrap();
-        assert!(GRAPH_STATE.with_borrow(GraphState::has_changed));
-        let after_offset = GRAPH_STATE.with_borrow(GraphState::curve_points);
+        assert_eq!(state.add_offset(1.0, 0.0), Err(PlotError::NoFunctionLoaded));
+        assert_eq!(state.zoom(0.5), Err(PlotError::NoFunctionLoaded));
+    }
+
+    #[test]
+    fn offset_and_zoom_change_points_and_mark_changed() {
+        let mut state = GraphState::new();
+        state.replace_function("x^2", -10.0, 10.0).unwrap();
+        state.changed = false;
+
+        let before_offset = state.curve_points();
+        state.add_offset(1.0, 0.5).unwrap();
+        assert!(state.changed);
+        let after_offset = state.curve_points();
         assert_ne!(before_offset, after_offset);
 
-        GRAPH_STATE.with_borrow_mut(GraphState::clear_changed);
-        zoom(0.5).unwrap();
-        assert!(GRAPH_STATE.with_borrow(GraphState::has_changed));
-        let after_zoom = GRAPH_STATE.with_borrow(GraphState::curve_points);
+        state.changed = false;
+        state.zoom(0.5).unwrap();
+        assert!(state.changed);
+        let after_zoom = state.curve_points();
         assert_ne!(after_offset, after_zoom);
     }
 }

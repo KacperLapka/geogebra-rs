@@ -7,7 +7,7 @@ use wgpu::util::DeviceExt;
 use winit::window::Window;
 
 use crate::graph;
-use crate::graph_state::GRAPH_STATE;
+use crate::graph_state::GraphState;
 use crate::grid;
 use crate::pipelines::{self, Vertex};
 
@@ -200,18 +200,17 @@ impl Renderer {
     }
 
     /// Rebuilds the curve buffers when the graph state has a pending change.
-    pub fn update(&mut self) {
-        let changed = GRAPH_STATE.with_borrow(|state| state.has_changed());
-        if !changed {
+    pub fn update(&mut self, graph_state: &mut GraphState) {
+        if !graph_state.changed {
             return;
         }
 
-        let points = GRAPH_STATE.with_borrow(|state| state.curve_points());
+        let points = graph_state.curve_points();
         self.graph_buffers = graph::points_raw_to_path(&points)
             .map(|path| graph::tessellate_curve(&path))
             .and_then(|geometry| GraphBuffers::upload(&self.device, &geometry));
 
-        GRAPH_STATE.with_borrow_mut(|state| state.clear_changed());
+        graph_state.changed = false;
     }
 
     /// Draws one frame and presents it to the surface.
