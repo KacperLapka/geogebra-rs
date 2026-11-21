@@ -51,7 +51,12 @@ impl GraphState {
         end: f64,
     ) -> Result<(), JsValue> {
         if function.trim().is_empty() {
-            return Err(empty_function_error());
+            return Err(js_error("Function expression is empty"));
+        }
+        if !start.is_finite() || !end.is_finite() || start >= end {
+            return Err(js_error(
+                "Range must be finite and start must be less than end",
+            ));
         }
 
         self.replace_function_with(|| {
@@ -100,6 +105,10 @@ impl GraphState {
     /// The dirty flag is only set on success, so the last rendered curve stays
     /// visible when the operation fails.
     pub fn zoom(&mut self, factor: f64) -> Result<(), JsValue> {
+        if !factor.is_finite() || factor <= 0.0 {
+            return Err(js_error("Zoom factor must be finite and greater than zero"));
+        }
+
         self.function.zoom(factor)?;
         self.changed = true;
         Ok(())
@@ -112,15 +121,16 @@ impl Default for GraphState {
     }
 }
 
-/// Builds the JS error returned for an empty function expression.
+/// Builds an error for the JS boundary.
+///
+/// Host builds cannot construct JS strings, so tests only need a placeholder.
 #[cfg(target_arch = "wasm32")]
-fn empty_function_error() -> JsValue {
-    JsValue::from_str("Function expression is empty")
+fn js_error(message: &str) -> JsValue {
+    JsValue::from_str(message)
 }
 
-/// Host builds cannot construct JS strings, so tests only need a placeholder.
 #[cfg(not(target_arch = "wasm32"))]
-fn empty_function_error() -> JsValue {
+fn js_error(_message: &str) -> JsValue {
     JsValue::NULL
 }
 
@@ -212,16 +222,57 @@ mod tests {
     }
 
     #[test]
-    fn offset_and_zoom_mark_changed() {
+    fn invalid_ranges_are_rejected_without_changing_state() {
         let mut state = GraphState::new();
         state.replace_function("x^2", -10.0, 10.0).unwrap();
         state.clear_changed();
 
-        state.add_offset(1.0, 0.5).unwrap();
-        assert!(state.has_changed());
+        let previous_function = state.function_name();
+        let previous_points = state.curve_points();
 
+        for (start, end) in [
+            (f64::NAN, 10.0),
+            (-10.0, f64::INFINITY),
+            (10.0, -10.0),
+            (0.0, 0.0),
+        ] {
+            assert!(state.replace_function("x^2", start, end).is_err());
+            assert!(!state.has_changed());
+            assert_eq!(state.function_name(), previous_function);
+            assert_eq!(state.curve_points(), previous_points);
+        }
+    }
+
+    #[test]
+    fn invalid_zoom_is_rejected_without_changing_state() {
+        let mut state = GraphState::new();
+        state.replace_function("x^2", -10.0, 10.0).unwrap();
         state.clear_changed();
-        state.zoom(2.0).unwrap();
-        assert!(state.has_changed());
+
+        let previous_points = state.curve_points();
+
+        for factor in [0.0, -0.5, f64::NAN, f64::INFINITY] {
+            assert!(state.zoom(factor).is_err());
+            assert!(!state.has_changed());
+            assert_eq!(state.curve_points(), previous_points);
+        }
+    }
+
+    #[test]
+    fn offset_and_zoom_change_points_and_mark_changed() {
+        update_graph_with_range("x^2", -10.0, 10.0).unwrap();
+        GRAPH_STATE.with_borrow_mut(GraphState::clear_changed);
+
+        let before_offset = GRAPH_STATE.with_borrow(GraphState::curve_points);
+        add_offset(1.0, 0.5).unwrap();
+        assert!(GRAPH_STATE.with_borrow(GraphState::has_changed));
+        let after_offset = GRAPH_STATE.with_borrow(GraphState::curve_points);
+        assert_ne!(before_offset, after_offset);
+
+        GRAPH_STATE.with_borrow_mut(GraphState::clear_changed);
+        zoom(0.5).unwrap();
+        assert!(GRAPH_STATE.with_borrow(GraphState::has_changed));
+        let after_zoom = GRAPH_STATE.with_borrow(GraphState::curve_points);
+        assert_ne!(after_offset, after_zoom);
     }
 }

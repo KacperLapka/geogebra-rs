@@ -7,7 +7,7 @@ const GRID_HALF_INTERVALS: i32 = 10;
 /// Distance between adjacent grid lines in clip space.
 const GRID_LINE_SPACING: f32 = 0.1;
 /// Clip-space coordinate of the grid's outer edge.
-const GRID_EXTENT: f32 = 1.0;
+const GRID_EXTENT: f32 = GRID_HALF_INTERVALS as f32 * GRID_LINE_SPACING;
 /// Colour applied to every grid vertex.
 const GRID_COLOR: [f32; 3] = [0.5, 0.5, 0.5];
 
@@ -45,20 +45,17 @@ mod tests {
         let vertices = build_grid_vertices();
         let line_count = (GRID_HALF_INTERVALS * 2 + 1) as usize;
 
+        assert_eq!(GRID_EXTENT, 1.0);
         assert_eq!(vertices.len(), line_count * 4);
-        assert!(vertices.iter().all(|vertex| vertex.color == GRID_COLOR));
-        assert!(vertices.iter().all(|vertex| {
-            vertex.position[0].abs() <= GRID_EXTENT && vertex.position[1].abs() <= GRID_EXTENT
-        }));
-        assert!(
-            vertices
-                .iter()
-                .any(|vertex| vertex.position[0] == GRID_EXTENT)
-        );
-        assert!(
-            vertices
-                .iter()
-                .any(|vertex| vertex.position[1] == -GRID_EXTENT)
-        );
+
+        for (line_index, line) in vertices.as_chunks::<4>().0.iter().enumerate() {
+            let offset = (line_index as i32 - GRID_HALF_INTERVALS) as f32 * GRID_LINE_SPACING;
+
+            assert_eq!(line[0].position, [offset, -GRID_EXTENT, 0.0]);
+            assert_eq!(line[1].position, [offset, GRID_EXTENT, 0.0]);
+            assert_eq!(line[2].position, [-GRID_EXTENT, offset, 0.0]);
+            assert_eq!(line[3].position, [GRID_EXTENT, offset, 0.0]);
+            assert!(line.iter().all(|vertex| vertex.color == GRID_COLOR));
+        }
     }
 }

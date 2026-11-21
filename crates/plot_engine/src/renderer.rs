@@ -107,7 +107,8 @@ impl Renderer {
             })
             .await?;
 
-        let config = Self::surface_configuration(&surface, &adapter, size.width, size.height);
+        let (width, height) = surface_dimensions(size.width, size.height).unwrap_or((1, 1));
+        let config = Self::surface_configuration(&surface, &adapter, width, height);
 
         let grid_pipeline = pipelines::create_pipeline(
             &device,

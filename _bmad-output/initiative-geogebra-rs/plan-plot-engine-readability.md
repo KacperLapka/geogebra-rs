@@ -102,3 +102,33 @@ Verdicts: 1 high, 1 medium, 1 low.
 - `graph_state.rs:60-61` — high — **defer**: real; `updateGraphWithRange("not a function")` traps the WASM module with `unreachable` and poisons later calls. Pre-existing `math_engine::compute_given_function` panic; the intent forbids modifying `math_engine`. Logged in `deferred-work.md`.
 - `graph_state.rs:152-169` — medium — **patch applied**: real; the failed-update test only exercised the whitespace guard. Added a private `replace_function_with` seam and `failed_candidate_keeps_previous_state`, which injects `Err(JsValue::NULL)` and asserts state is unchanged.
 - `test.html:547-552` — low — **patch applied**: real; the harness never called `addOffset` and only conditionally reached `updateGraph`. `applyPlot` now calls `updateGraph`, `updateGraphWithRange`, `addOffset`, and `zoom` when available (file remains untracked).
+
+## Code Review
+
+### 2026-11-21
+
+**0 decision-needed, 9 patch, 3 defer, 9 rejected.**
+
+- [x] [Review][Defer] Unparseable expressions still trap the WASM module [crates/plot_engine/src/graph_state.rs:47] — deferred: scope limited to `plot_engine`; root cause is `math_engine::compute_given_function`'s `Builder::compile().expect(...)`, and pre-validation would add a dependency. Browser probe: `"not a function"` throws `unreachable` and poisons later calls.
+- [x] [Review][Defer] Atomicity scope for offset and zoom [crates/plot_engine/src/graph_state.rs:92] — deferred: making these atomic needs cloning or a `math_engine` API change, outside `plot_engine` scope. `add_offset`/`zoom` still mutate the active `Mathematician` before validation.
+- [x] [Review][Patch] Guard non-finite samples before tessellation [crates/plot_engine/src/graph.rs:30] — `addOffset(0, Infinity)` or overflow can reach lyon and hit `expect`.
+- [x] [Review][Patch] Validate range and zoom inputs [crates/plot_engine/src/graph_state.rs:47] — reject non-finite or non-ascending `start`/`end`; reject non-finite or non-positive `zoom`.
+- [x] [Review][Patch] Derive and pin the grid layout [crates/plot_engine/src/grid.rs:6] — derive `GRID_EXTENT` from interval/spacing and assert exact offsets/pairs.
+- [x] [Review][Patch] Assert curve sample values and stroke width [crates/plot_engine/src/graph.rs:95] — current tests use the new constants as expectations and never pin `0.008`.
+- [x] [Review][Patch] Assert offset/zoom change curve points [crates/plot_engine/src/graph_state.rs:214] — current test only checks the dirty flag.
+- [x] [Review][Patch] Correct geometry and WASM API docs [crates/plot_engine/src/graph.rs:3] — clip space ends at 0.998, y is not strictly `[-1,1]`, and the JS API omits units/direction/error cases.
+- [x] [Review][Patch] Assert the 1000-sample precondition [crates/plot_engine/src/graph.rs:30] — `points_raw_to_path` uses a fixed step regardless of slice length.
+- [x] [Review][Patch] Apply the surface-size guard in `Renderer::new` [crates/plot_engine/src/renderer.rs:80] — construction bypasses `surface_dimensions`.
+- [x] [Review][Patch] Use non-identity offset/zoom in the harness [crates/plot_engine/test.html:554] — `addOffset(0, 0)` and `zoom(1)` cannot prove the exports work.
+- [x] [Review][Defer] Frontend and ADR drift from the refactor [frontend/src/routes/+page.svelte:65] — deferred: pre-existing; the page still passes a `Float32Array` to `updateGraph`, and the ADR documents removed types/contracts.
+
+**Rejected:**
+- Plan acceptance contradiction (invalid input) — false: the code issue is carried by Decision 1; the review does not edit the plan.
+- Deferred-work actionability — false: fix edits the plan/deferred doc.
+- Code Map pre-refactor — false: fix edits the plan.
+- Triage line references — false: fix edits the plan.
+- Clear-color change unrecorded — false: fix edits the plan; `Color::WHITE` is visually equivalent to the clamped 255 values.
+- Public `Renderer` API — false: `App`'s WASM constructor exposes `EventLoop<Renderer>`, and `State` was public before.
+- Commit-message claim — false: “improve readability” does not claim strict behavior; blank startup is a recorded Decision.
+- `GraphBuffers` empty guard untested — low: empty geometry is tested at the path level; a GPU upload test adds more than a direct correction.
+- Duplicate shader creation in `create_pipeline` — low: startup-only cost, no observable behavior change.
