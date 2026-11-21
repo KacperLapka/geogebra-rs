@@ -1,0 +1,3 @@
+- source_plan: `_bmad-output/initiative-geogebra-rs/plan-plot-engine-readability.md`
+  summary: Make `updateGraph`/`updateGraphWithRange` return `Err` instead of trapping when `math_engine` cannot parse an expression.
+  evidence: Browser probe against the built WASM: `updateGraphWithRange("x^2", -10, 10)` succeeds, `updateGraphWithRange("not a function", -10, 10)` throws `unreachable`, and the next `updateGraph("x^2")` also throws `unreachable`. Root cause is `math_engine::compute_given_function` using `Builder::compile().expect(...)`; fixing it requires a `math_engine` change or pre-validation in `plot_engine`.

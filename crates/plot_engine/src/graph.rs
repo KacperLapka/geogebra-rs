@@ -1,96 +1,116 @@
+//! Pure geometry for the plotted curve.
+//!
+//! `math_engine` returns 1000 y samples already normalised to `[-1, 1]`. This
+//! module turns those samples into a lyon path and tessellates it into vertices
+//! that the GPU can draw as a triangle list.
+
 use lyon_tessellation::math::point;
 use lyon_tessellation::path::Path;
-use lyon_tessellation::*;
+use lyon_tessellation::{
+    BuffersBuilder, StrokeOptions, StrokeTessellator, StrokeVertex, VertexBuffers,
+};
 
-const PROBING_SIZE: usize = 1000;
-const STEP: f32 = 2.0 / PROBING_SIZE as f32;
+use crate::pipelines::Vertex;
 
-#[repr(C)]
-#[derive(Clone, Copy, Debug, bytemuck::Pod, bytemuck::Zeroable)]
-pub struct MyVertex {
-    pub position: [f32; 3],
-    pub color: [f32; 3],
-}
+/// Number of samples produced by `math_engine` for each function.
+pub const CURVE_SAMPLE_COUNT: usize = 1000;
+/// Clip-space x coordinate of the first sample.
+const CURVE_X_START: f32 = -1.0;
+/// Horizontal distance between consecutive samples in clip space.
+const CURVE_X_STEP: f32 = 2.0 / CURVE_SAMPLE_COUNT as f32;
+/// Stroke width of the curve in clip-space units.
+const CURVE_WIDTH: f32 = 0.008;
+/// Colour applied to every curve vertex.
+const CURVE_COLOR: [f32; 3] = [1.0, 0.0, 0.0];
 
-pub fn points_raw_to_path(points: &Vec<f32>) -> Path {
+/// Converts normalised y samples into a polyline spanning clip space.
+///
+/// Returns `None` when there are no samples, which lets the renderer keep an
+/// empty scene instead of uploading zero-length buffers.
+pub fn points_raw_to_path(points: &[f32]) -> Option<Path> {
+    // `split_first` is the explicit empty-input guard: no samples, no path.
+    let (first, rest) = points.split_first()?;
+
     let mut builder = Path::builder();
+    builder.begin(point(CURVE_X_START, *first));
 
-    let mut points_iter = points.iter().enumerate();
-    let starting_point = point(-1.0, *points_iter.next().unwrap_or((0, &0.0)).1);
-    builder.begin(starting_point);
-
-    for (i, y) in points_iter {
-        let x = -1.0 + (i as f32 * STEP);
+    for (index, y) in rest.iter().enumerate() {
+        // The first sample is at index 0, so `rest` starts at index 1.
+        let x = CURVE_X_START + (index + 1) as f32 * CURVE_X_STEP;
         builder.line_to(point(x, *y));
     }
 
     builder.end(false);
-    builder.build()
+    Some(builder.build())
 }
 
-//pub fn str_to_path(function: &str, offset: (f64, f64)) -> Result<Path, String> {
-//    let points = math_engine::compute_given_function(function, 0.0, 0.0)?.into_iter().map(|f| f.1).collect();
-//    if points.len() != 1000 {
-//        return Err("dsds".to_owned());
-//    }
-//    Ok(points_raw_to_path(&points))
-//}
-
-pub fn path_to_vertex(path: Path) -> VertexBuffers<MyVertex, u16> {
-    let mut geometry: VertexBuffers<MyVertex, u16> = VertexBuffers::new();
+/// Tessellates a curve path into a triangle list with the plot's stroke style.
+pub fn tessellate_curve(path: &Path) -> VertexBuffers<Vertex, u16> {
+    let mut geometry = VertexBuffers::new();
     let mut tessellator = StrokeTessellator::new();
-    {
-        // Compute the tessellation.
-        tessellator
-            .tessellate_path(
-                &path,
-                &StrokeOptions::default().with_line_width(0.008),
-                &mut BuffersBuilder::new(&mut geometry, |vertex: StrokeVertex| {
-                    MyVertex {
-                        position: [vertex.position().x, vertex.position().y, 0.0],
-                        color: [1.0, 0.0, 0.0], // Red color
-                    }
-                }),
-            )
-            .unwrap();
-    }
-    // The tessellated geometry is ready to be uploaded to the GPU.
-    return geometry;
+
+    tessellator
+        .tessellate_path(
+            path,
+            &StrokeOptions::default().with_line_width(CURVE_WIDTH),
+            &mut BuffersBuilder::new(&mut geometry, |vertex: StrokeVertex| Vertex {
+                position: [vertex.position().x, vertex.position().y, 0.0],
+                color: CURVE_COLOR,
+            }),
+        )
+        .expect("curve tessellation should not fail for a valid path");
+
+    geometry
 }
 
-pub fn example() -> VertexBuffers<MyVertex, u16> {
-    let mut builder = Path::builder();
-    builder.begin(point(-1.0, 0.0));
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use lyon_tessellation::path::PathEvent;
 
-    // Generujemy punkty funkcji (np. wykres y = sin(x) w skali)
-    for i in 1..=100 {
-        let x = -1.0 + (i as f32 / 100.0) * 2.0; // Od -1.0 do 1.0
-        let y = (x * 3.14).sin() * 0.5; // Jakaś funkcja matematyczna
-
-        // Dodajemy kolejny odcinek
-        builder.line_to(point(x, y));
+    #[test]
+    fn empty_samples_produce_no_path() {
+        assert!(points_raw_to_path(&[]).is_none());
     }
-    builder.end(false);
-    let path = builder.build();
 
-    let mut geometry: VertexBuffers<MyVertex, u16> = VertexBuffers::new();
-    let mut tessellator = StrokeTessellator::new();
-    {
-        // Compute the tessellation.
-        tessellator
-            .tessellate_path(
-                &path,
-                &StrokeOptions::default().with_line_width(0.008),
-                &mut BuffersBuilder::new(&mut geometry, |vertex: StrokeVertex| {
-                    MyVertex {
-                        position: [vertex.position().x, vertex.position().y, 0.0],
-                        color: [1.0, 0.0, 0.0], // Red color
-                    }
-                }),
-            )
-            .unwrap();
+    #[test]
+    fn samples_map_across_clip_space() {
+        let path = points_raw_to_path(&[0.0, 0.5, -0.5]).unwrap();
+        let mut lines = path.iter().filter_map(|event| match event {
+            PathEvent::Line { from, to } => Some((from, to)),
+            _ => None,
+        });
+
+        let (first_from, first_to) = lines.next().unwrap();
+        assert_eq!(first_from, point(CURVE_X_START, 0.0));
+        assert_eq!(first_to, point(CURVE_X_START + CURVE_X_STEP, 0.5));
+
+        let (second_from, second_to) = lines.next().unwrap();
+        assert_eq!(second_from, first_to);
+        assert_eq!(second_to, point(CURVE_X_START + 2.0 * CURVE_X_STEP, -0.5));
+
+        assert!(lines.next().is_none());
     }
-    // The tessellated geometry is ready to be uploaded to the GPU.
-    return geometry;
+
+    #[test]
+    fn tessellated_curve_uses_plot_style() {
+        let path = points_raw_to_path(&[0.0, 0.5, 0.0, -0.5]).unwrap();
+        let geometry = tessellate_curve(&path);
+
+        assert!(!geometry.vertices.is_empty());
+        assert!(!geometry.indices.is_empty());
+        for vertex in &geometry.vertices {
+            assert_eq!(vertex.color, CURVE_COLOR);
+            assert_eq!(vertex.position[2], 0.0);
+        }
+    }
+
+    #[test]
+    fn single_sample_tessellates_to_empty_geometry() {
+        let path = points_raw_to_path(&[0.5]).unwrap();
+        let geometry = tessellate_curve(&path);
+
+        assert!(geometry.vertices.is_empty());
+        assert!(geometry.indices.is_empty());
+    }
 }
-
