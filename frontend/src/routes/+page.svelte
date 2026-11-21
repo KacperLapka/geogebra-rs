@@ -1,12 +1,12 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  
+
   // silnik graficzny
-  import initPlot, { updateGraph } from '#lib/pkg/wasm.js';
+  import initPlot, { updateGraph, addOffset, zoom } from '#lib/pkg/wasm.js';
   import plotWasmUrl from '#lib/pkg/wasm_bg.wasm?url';
 
-  // silnik matematyczny
-  import initMath, { compute_derivative, evaluate_function } from '#lib/pkg_math/math_engine.js';
+  // silnik matematyczny (nadal używany do wyświetlenia wzoru pochodnej w HTML)
+  import initMath, { compute_derivative } from '#lib/pkg_math/math_engine.js';
   import mathWasmUrl from '#lib/pkg_math/math_engine_bg.wasm?url';
 
   type WynikObliczen = { wzor: string; pochodna: string; wlasnosci: string[] };
@@ -14,21 +14,78 @@
   let funkcja = $state("x^2");
   let wynik = $state<WynikObliczen | null>(null);
   let ladowanie = $state(false);
-  
-  // zmienna informująca, czy oba moduły WASM zostały już załadowane
   let wasmGotowy = $state(false);
 
-  onMount(async () => {
-    try {
-      // inicjalizacja obu modułów WASM jeden po drugim
-      await initPlot(plotWasmUrl);
-      await initMath(mathWasmUrl);
-      
-      wasmGotowy = true;
-    } catch (e) {
-      console.error("Błąd ładowania modułów WASM:", e);
+  // stan do obsługi przesuwania (pan) i zoomu na canvasie
+  let canvasEl: HTMLCanvasElement;
+  let isDragging = $state(false);
+  let lastX = 0;
+  let lastY = 0;
+
+  onMount(() => {
+    async function initWasm() {
+      try {
+        await initPlot(plotWasmUrl);
+        await initMath(mathWasmUrl);
+        wasmGotowy = true;
+      } catch (e) {
+        console.error("Błąd ładowania modułów WASM:", e);
+      }
     }
+
+    initWasm();
+
+    // Nasłuch na wheel z { passive: false }, żeby e.preventDefault() blokowało przewijanie strony
+    const handleWheel = (e: WheelEvent) => {
+      e.preventDefault();
+      if (!wasmGotowy) return;
+
+      // kółko w górę (deltaY < 0) = przybliżenie, w dół = oddalenie
+      const factor = e.deltaY < 0 ? 0.9 : 1.1;
+      try {
+        zoom(factor);
+      } catch (err) {
+        console.error("Błąd zoom:", err);
+      }
+    };
+
+    canvasEl.addEventListener('wheel', handleWheel, { passive: false });
+    return () => canvasEl.removeEventListener('wheel', handleWheel);
   });
+
+  function handlePointerDown(e: PointerEvent) {
+    if (!wasmGotowy) return;
+    isDragging = true;
+    lastX = e.clientX;
+    lastY = e.clientY;
+    canvasEl.setPointerCapture(e.pointerId);
+  }
+
+  function handlePointerMove(e: PointerEvent) {
+    if (!isDragging || !wasmGotowy) return;
+
+    const rect = canvasEl.getBoundingClientRect();
+    // Przeliczenie delty z pikseli na znormalizowany zakres płótna (-2..2)
+    const dx = -((e.clientX - lastX) / rect.width) * 2.0;
+    const dy = -((e.clientY - lastY) / rect.height) * 2.0;
+
+    lastX = e.clientX;
+    lastY = e.clientY;
+
+    try {
+      addOffset(dx, dy);
+    } catch (err) {
+      console.error("Błąd addOffset:", err);
+    }
+  }
+
+  function handlePointerUp(e: PointerEvent) {
+    if (!isDragging) return;
+    isDragging = false;
+    if (canvasEl.hasPointerCapture(e.pointerId)) {
+      canvasEl.releasePointerCapture(e.pointerId);
+    }
+  }
 
   async function wyslijDoObliczenia() {
     if (funkcja.trim() === "") return;
@@ -42,30 +99,18 @@
     }
 
     try {
-      // liczymu pochodną funkcji w Rust
       const wyliczonaPochodna = compute_derivative(funkcja);
-      
+
       wynik = {
         wzor: funkcja,
         pochodna: wyliczonaPochodna,
         wlasnosci: ["Obliczenia wykonane natywnie w Rust"],
       };
 
-      // pobieramy punkty do wykresu z Rusta, w zakresie od -10 do 10
-      const punktyZRust = evaluate_function(wyliczonaPochodna, -10.0, 10.0);
-
-      // tworzymy Float32Array, bo WebGPU wymaga takiej tablicy do rysowania
-      const punktyDoWykresu = new Float32Array(1000);
-      for (let i = 0; i < 1000; i++) {
-        // punktyZRust[i] to obiekt PointResult {x, y}, bierzemy z niego tylko y
-        punktyDoWykresu[i] = punktyZRust[i].y; 
-      }
-
-      // wysyłamy gotową tablicę do wyrysowania w WebGPU
-      updateGraph(punktyDoWykresu);
-
+      // updateGraph przyjmuje teraz bezpośrednio string ze wzorem
+      // (jeśli chcesz rysować wykres pochodnej zamiast samej funkcji, przekaż `wyliczonaPochodna`)
+      updateGraph(funkcja);
     } catch (error) {
-      // w ramach błędnego inputy, wyświetlamy alert i logujemy błąd w konsoli
       alert("Błąd silnika matematycznego Rusta: Nieznany format wzoru.");
       console.error(error);
     }
@@ -84,10 +129,19 @@
     </button>
   </div>
 
-  <!-- canvas został przeniesiony poza blok {#if}, żeby Rust znalazł go od razu przy starcie strony -->
-  <h3>Wykres funkcji:</h3>
+  <h3>Wykres pochodnej funkcji:</h3>
   <div class="pojemnik-na-wykres">
-    <canvas id="canvas" width="400" height="400"></canvas>
+    <canvas
+      id="canvas"
+      width="400"
+      height="400"
+      bind:this={canvasEl}
+      class:dragging={isDragging}
+      onpointerdown={handlePointerDown}
+      onpointermove={handlePointerMove}
+      onpointerup={handlePointerUp}
+      onpointercancel={handlePointerUp}
+    ></canvas>
   </div>
 
   {#if wynik}
@@ -106,14 +160,18 @@
   .wyniki { background: #f4f4f4; padding: 20px; border-radius: 8px; }
   .pojemnik-na-wykres { width: 100%; display: flex; justify-content: center; margin-top: 15px; }
   canvas {
-    /* Wymuszamy maksymalne wymiary */
     max-width: 600px !important;
     max-height: 400px !important;
     width: 100% !important;
-    background: white; 
-    border: 1px solid #ccc; 
-    border-radius: 4px; 
+    background: white;
+    border: 1px solid #ccc;
+    border-radius: 4px;
     margin: 0 auto;
     display: block;
+    cursor: grab;
+    touch-action: none;
+  }
+  canvas.dragging {
+    cursor: grabbing;
   }
 </style>
