@@ -28,3 +28,21 @@ Session: ses_e0273e0e3ffePwQCx53MdguHWA · Timestamp: 2026-11-21T12:49:35+01:00
 - Result: Block 1 checked; Block 2 current and unchecked.
 - Evidence: [narrative](walkthrough-plot-engine-readability.md)
 - Open: Reviewer acceptance of Block 2.
+
+## 4 — Formal review — move outcome
+
+Session: ses_e0273e0e3ffePwQCx53MdguHWA · Timestamp: 2026-11-21T13:10:07+01:00
+
+- Action: Ran formal review via `bmad-code-review` on commit `98cfc26`; four lenses.
+- Result: 2 decision-needed deferred (unparseable expressions trap in `math_engine`; `offset`/`zoom` not atomic), 9 patches (input guards, grid extent, stronger geometry/state tests, docs, surface-size guard, harness values), 1 defer (frontend/ADR drift), 9 rejected.
+- Verification: fmt check, check, clippy `-D warnings`, tests (15 passed), wasm check all pass after patches.
+- Evidence: [plan](../plan-plot-engine-readability.md) Code Review section, [deferred-work.md](../deferred-work.md).
+
+## 5 — Slice 1: Module split and dependency direction — presented; Block 2 accepted
+
+Session: ses_e0273e0e3ffePwQCx53MdguHWA · Timestamp: 2026-11-21T13:11:24+01:00
+
+- Action: Marked Block 2 accepted after reviewer confirmation and presented Slice 1 (module split and dependency direction).
+- Result: Block 2 checked; Slice 1 current and unchecked.
+- Evidence: [narrative](walkthrough-plot-engine-readability.md)
+- Open: Reviewer acceptance of Slice 1.
