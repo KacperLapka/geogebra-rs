@@ -3,7 +3,7 @@
 Target: commit `98cfc266c9a6123112f4eaea4ae66c808ff29ace` — `refactor(plot_engine): improve readability`
 Plan: [plan-plot-engine-readability.md](../plan-plot-engine-readability.md)
 
-Status: in progress · Current block: **Slice 1 — Module split and dependency direction**
+Status: complete · Current block: none
 
 Legend: `[ ]` means unvisited, in progress, or reopened; `[x]` means accepted by the reviewer.
 
@@ -37,7 +37,7 @@ The commit turns one monolithic renderer into seven focused modules plus a thin 
 
 ### Slice 1 — Module split and dependency direction
 
-- [ ] Current — presented
+- [x] Accepted
 - Changed during review: no
 
 `lib.rs` is now 67 lines of crate docs, module declarations, re-exports, and startup. The event loop lives in `app.rs`, GPU resources and drawing in `renderer.rs`, the graph model in `graph_state.rs`, and JS exports in `wasm_interface.rs`. Dependencies flow `app -> renderer -> {pipelines, grid, graph, graph_state}` and `wasm_interface -> graph_state`; `lib.rs` only wires them, so the old GPU/event/state tangle is gone.
@@ -46,7 +46,10 @@ References: [lib.rs:16](../../../crates/plot_engine/src/lib.rs#L16), [app.rs:19]
 
 ## Periphery
 
-- [ ] Unvisited
+- [x] Accepted
 - Changed during review: no
 
-_Content pending._
+- [Cargo.toml](../../../crates/plot_engine/Cargo.toml) — removed the duplicate `wasm-bindgen` target dependency.
+- [lib.rs:1](../../../crates/plot_engine/src/lib.rs#L1) — crate and module documentation, plus explicit re-exports.
+- [test.html](../../../crates/plot_engine/test.html) — manual harness updated to exercise `updateGraph`, `updateGraphWithRange`, `addOffset`, and `zoom`; remains untracked.
+- [deferred-work.md](../deferred-work.md) — three follow-ups: the `math_engine` parse trap, offset/zoom atomicity, and frontend/ADR drift.

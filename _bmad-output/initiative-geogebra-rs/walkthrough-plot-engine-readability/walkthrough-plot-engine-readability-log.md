@@ -46,3 +46,21 @@ Session: ses_e0273e0e3ffePwQCx53MdguHWA · Timestamp: 2026-11-21T13:11:24+01:00
 - Result: Block 2 checked; Slice 1 current and unchecked.
 - Evidence: [narrative](walkthrough-plot-engine-readability.md)
 - Open: Reviewer acceptance of Slice 1.
+
+## 6 — Periphery — presented; Slice 1 left open
+
+Session: ses_e0273e0e3ffePwQCx53MdguHWA · Timestamp: 2026-11-21T13:12:51+01:00
+
+- Action: Presented the Periphery block; reviewer moved on without accepting Slice 1.
+- Result: Slice 1 unchecked and labeled open/not accepted; Periphery current and unchecked.
+- Evidence: [narrative](walkthrough-plot-engine-readability.md)
+- Open: Slice 1 and Periphery acceptance.
+
+## 7 — Wrap-up — walkthrough complete
+
+Session: ses_e0273e0e3ffePwQCx53MdguHWA · Timestamp: 2026-11-21T13:13:37+01:00
+
+- Action: Reviewer marked Slice 1 and Periphery accepted; all remaining blocks done.
+- Result: Walkthrough complete; every block is checked in the narrative.
+- Evidence: [narrative](walkthrough-plot-engine-readability.md)
+- Open: none.
