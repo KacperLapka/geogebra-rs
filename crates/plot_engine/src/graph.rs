@@ -12,8 +12,10 @@ use lyon_tessellation::path::Path;
 use lyon_tessellation::{
     BuffersBuilder, StrokeOptions, StrokeTessellator, StrokeVertex, VertexBuffers,
 };
+use math_engine::Mathematician;
 
 use crate::pipelines::Vertex;
+use crate::graph_state::Curve;
 
 /// Number of samples produced by `math_engine`; the path contract expects this
 /// exact count.
@@ -33,7 +35,12 @@ const CURVE_COLOR: [f32; 3] = [1.0, 0.0, 0.0];
 /// Returns `None` when the input is empty or contains a non-finite y value,
 /// letting the renderer keep an empty scene instead of uploading invalid
 /// geometry.
-pub fn points_raw_to_path(points: &[f32]) -> Option<Path> {
+fn mathematician_to_path(mathematician: &Mathematician) -> Option<Path> {
+    let points = mathematician.points_normalised_function().iter().map(|el| el.y() as f32).collect();
+    points_raw_to_path(&points)
+}
+
+pub fn points_raw_to_path(points: &Vec<f32>) -> Option<Path> {
     if points.is_empty() || points.iter().any(|y| !y.is_finite()) {
         return None;
     }
@@ -81,6 +88,28 @@ pub fn tessellate_curve(path: &Path) -> VertexBuffers<Vertex, u16> {
     geometry
 }
 
+pub fn tessellate_curves(curves: &[Curve]) -> VertexBuffers<Vertex, u16> {
+    let mut geometry = VertexBuffers::new();
+    let mut tessellator = StrokeTessellator::new();
+
+    for curve in curves.iter() { 
+        if let Some(p) = mathematician_to_path(&curve.mathematician) {
+    tessellator
+        .tessellate_path(
+            &p,
+            &StrokeOptions::default().with_line_width(CURVE_WIDTH),
+            &mut BuffersBuilder::new(&mut geometry, |vertex: StrokeVertex| Vertex {
+                position: [vertex.position().x, vertex.position().y, 0.0],
+                color: CURVE_COLOR,
+            }),
+        )
+        .expect("curve tessellation should not fail for a valid path");
+        }
+    }
+
+    geometry
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -92,7 +121,7 @@ mod tests {
 
     #[test]
     fn empty_samples_produce_no_path() {
-        assert!(points_raw_to_path(&[]).is_none());
+        assert!(points_raw_to_path(&Vec::new()).is_none());
     }
 
     #[test]

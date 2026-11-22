@@ -205,10 +205,13 @@ impl Renderer {
             return;
         }
 
-        let points = graph_state.curve_points();
-        self.graph_buffers = graph::points_raw_to_path(&points)
-            .map(|path| graph::tessellate_curve(&path))
-            .and_then(|geometry| GraphBuffers::upload(&self.device, &geometry));
+        // let points = graph_state.curve_points();
+        // self.graph_buffers = graph::points_raw_to_path(&points)
+        //     .map(|path| graph::tessellate_curve(&path))
+        //     .and_then(|geometry| GraphBuffers::upload(&self.device, &geometry));
+
+        let geometry = graph::tessellate_curves(&graph_state.curves);
+        self.graph_buffers = GraphBuffers::upload(&self.device, &geometry);
 
         graph_state.changed = false;
     }

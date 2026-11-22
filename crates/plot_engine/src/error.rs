@@ -36,6 +36,8 @@ pub enum PlotError {
     NotACanvas,
     /// The winit event loop could not be created.
     EventLoop(String),
+    /// Too many functions
+    TooManyFunctions,
 }
 
 impl PlotError {
@@ -53,6 +55,7 @@ impl PlotError {
             Self::CanvasNotFound(_) => "CanvasNotFound",
             Self::NotACanvas => "NotACanvas",
             Self::EventLoop(_) => "EventLoopError",
+            Self::TooManyFunctions => "TooManyFunctions",
         }
     }
 }
@@ -86,6 +89,7 @@ impl fmt::Display for PlotError {
             Self::EventLoop(message) => {
                 write!(formatter, "failed to create the event loop: {message}")
             }
+            Self::TooManyFunctions => write!(formatter, "too many functions"),
         }
     }
 }

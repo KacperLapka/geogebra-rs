@@ -14,6 +14,7 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
+use math_engine::Mathematician;
 use wasm_bindgen::JsCast;
 use wasm_bindgen::prelude::*;
 use winit::event_loop::EventLoop;
@@ -63,53 +64,13 @@ impl PlotEngine {
         Ok(Self { graph_state, proxy })
     }
 
-    /// Updates the graph using the default `[-10, 10]` x range.
-    #[wasm_bindgen(js_name = "updateGraph")]
-    pub fn update_graph(&mut self, function: &str) -> Result<(), PlotError> {
-        self.with_state(|state| state.replace_function(function, -10.0, 10.0))?;
+    #[wasm_bindgen(js_name = "addToGraph")]
+    pub fn add_to_graph(&mut self, mathematician: Mathematician) -> Result<(), PlotError> {
+        self.with_state(|state| state.push_function(mathematician, [1.0, 0.0, 0.0]))?;
         self.request_redraw();
         Ok(())
     }
 
-    /// Replaces the graph with a function evaluated over `[start, end]`.
-    ///
-    /// `start` and `end` must be finite with `start < end`; success produces
-    /// 1000 samples. Invalid input leaves the last valid curve untouched.
-    #[wasm_bindgen(js_name = "updateGraphWithRange")]
-    pub fn update_graph_with_range(
-        &mut self,
-        function: &str,
-        start: f64,
-        end: f64,
-    ) -> Result<(), PlotError> {
-        self.with_state(|state| state.replace_function(function, start, end))?;
-        self.request_redraw();
-        Ok(())
-    }
-
-    /// Pans and shifts the active graph.
-    ///
-    /// `x_shift` is in function-domain x units; `y_shift` is in clip-space y
-    /// units. Returns an error when no function is loaded or the operation
-    /// fails.
-    #[wasm_bindgen(js_name = "addOffset")]
-    pub fn add_offset(&mut self, x_shift: f32, y_shift: f32) -> Result<(), PlotError> {
-        self.with_state(|state| state.add_offset(x_shift.into(), y_shift.into()))?;
-        self.request_redraw();
-        Ok(())
-    }
-
-    /// Scales the visible x range about its centre.
-    ///
-    /// `factor > 1` zooms out, `0 < factor < 1` zooms in, and non-finite or
-    /// non-positive factors are rejected. Returns an error when no function is
-    /// loaded.
-    #[wasm_bindgen(js_name = "zoom")]
-    pub fn zoom(&mut self, factor: f32) -> Result<(), PlotError> {
-        self.with_state(|state| state.zoom(factor.into()))?;
-        self.request_redraw();
-        Ok(())
-    }
 
     /// Borrows the graph state once per operation.
     fn with_state<T>(
